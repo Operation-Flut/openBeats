@@ -404,7 +404,10 @@ local function placeMarkers(timeline, analysis, startFrame, endFrame, fps)
 
     local beats = analysis.beats or {}
     local bpm = asNumber(analysis.bpm, 0)
-    local note = bpm > 0 and string.format("%.2f BPM", bpm) or "Beat"
+    local markerColor = tostring(analysis.marker_color or "Blue")
+    local markerName = tostring(analysis.marker_name or "Beat")
+    if markerName == "" then markerName = "Beat" end
+    local note = bpm > 0 and string.format("%.2f BPM", bpm) or markerName
     local usedFrames = {}
     local inserted = 0
     local skipped = 0
@@ -420,8 +423,8 @@ local function placeMarkers(timeline, analysis, startFrame, endFrame, fps)
                     local ok, added = pcall(function()
                         return timeline:AddMarker(
                             markerFrame,
-                            "Blue",
-                            "Beat",
+                            markerColor,
+                            markerName,
                             note,
                             1,
                             "openbeats.beat.v1"
