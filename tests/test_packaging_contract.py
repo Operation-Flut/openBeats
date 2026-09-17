@@ -28,6 +28,8 @@ def test_windows_bundle_has_packaged_agent_entrypoint() -> None:
 def test_kivy_settings_window_exposes_detection_controls() -> None:
     ui = (ROOT / "app" / "openbeats" / "settings_ui.py").read_text(encoding="utf-8")
 
+    assert 'os.environ.setdefault("KIVY_NO_ARGS", "1")' in ui
+    assert ui.index('KIVY_NO_ARGS') < ui.index('from kivy.app import App')
     assert "Music Tempo" in ui
     assert "Drum Beat" in ui
     assert "Onset" in ui
