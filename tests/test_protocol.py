@@ -15,15 +15,17 @@ from openbeats.protocol import (
 
 def test_session_id_from_audio() -> None:
     assert session_id_from_audio("OpenBeats_1234-abcd.wav") == "1234-abcd"
-    assert session_id_from_audio("other.wav") is None
+    assert session_id_from_audio("OpenBeats_1234-abcd.mp4") == "1234-abcd"
+    assert session_id_from_audio("OpenBeats_1234-abcd.mov") == "1234-abcd"
+    assert session_id_from_audio("other.mp4") is None
 
 
 def test_track_selection_request_from_audio() -> None:
-    request = track_selection_request_from_audio("OpenBeatsSelect_1234-abcd__1-3-5.wav")
+    request = track_selection_request_from_audio("OpenBeatsSelect_1234-abcd__1-3-5.drt")
     assert request is not None
     assert request.session_id == "1234-abcd"
     assert request.track_indices == (1, 3, 5)
-    assert track_selection_request_from_audio("OpenBeats_1234-abcd.wav") is None
+    assert track_selection_request_from_audio("OpenBeats_1234-abcd.mp4") is None
 
 
 def test_selection_lua_serializes_choice_and_cancel() -> None:
@@ -47,7 +49,7 @@ def test_error_lua_escapes_strings() -> None:
 
 
 def test_update_stability_counts_unchanged_polls(tmp_path: Path) -> None:
-    path = tmp_path / "OpenBeats_test.wav"
+    path = tmp_path / "OpenBeats_test.mp4"
     path.write_bytes(b"x" * 128)
     first = update_stability(path, None)
     second = update_stability(path, first)
