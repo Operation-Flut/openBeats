@@ -159,6 +159,40 @@ def _filter_beat_strength(
     return filtered if filtered.size >= 2 else valid
 
 
+def _suppress_close_frames(
+    frames: np.ndarray,
+    onset_envelope: np.ndarray,
+    sample_rate: int,
+    hop_length: int,
+    min_gap_ms: int,
+) -> np.ndarray:
+    """Merge nearby rhythmic events and keep the stronger transient."""
+    values = np.unique(np.asarray(frames, dtype=int).reshape(-1))
+    if values.size < 2 or min_gap_ms <= 0:
+        return values
+
+    minimum_frames = max(
+        1,
+        int(round((min_gap_ms / 1000.0) * sample_rate / hop_length)),
+    )
+    envelope = np.asarray(onset_envelope, dtype=float).reshape(-1)
+    kept: list[int] = []
+
+    for frame in values:
+        current = int(frame)
+        if not kept or current - kept[-1] >= minimum_frames:
+            kept.append(current)
+            continue
+
+        previous = kept[-1]
+        previous_strength = envelope[previous] if 0 <= previous < envelope.size else 0.0
+        current_strength = envelope[current] if 0 <= current < envelope.size else 0.0
+        if current_strength > previous_strength:
+            kept[-1] = current
+
+    return np.asarray(kept, dtype=int)
+
+
 def _legacy_tempo_frames(audio: np.ndarray, sample_rate: int) -> tuple[float, np.ndarray, int]:
     """Proven fallback used by the first working OpenBeats builds."""
     hop_length = 512
@@ -209,10 +243,6 @@ def analyze_file(path: str | Path, settings: BeatSettings | None = None) -> Beat
     if len(audio) == 0 or not np.any(np.abs(audio) > 1e-8):
         return BeatAnalysis(bpm=0.0, beats=(), duration=duration)
 
-    # Tempo mode intentionally analyzes the full mix. HPSS can remove too much
-    # useful rhythmic information from melodic tracks and was a regression from
-    # the first working OpenBeats analyzer. Drum mode is the explicit opt-in for
-    # percussion-focused separation.
     analysis_audio = (
         _percussive_signal(audio, hop_length, 4.0)
         if options.mode == "drum"
@@ -268,13 +298,16 @@ def analyze_file(path: str | Path, settings: BeatSettings | None = None) -> Beat
                 snap_window,
             )
 
-    selected_frames = np.asarray(selected_frames, dtype=int).reshape(-1)
+    selected_frames = _suppress_close_frames(
+        np.asarray(selected_frames, dtype=int),
+        onset_envelope,
+        sample_rate,
+        hop_length,
+        options.min_gap_ms,
+    )
     selected_hop = hop_length
     result_bpm = _tempo_scalar(tempo)
 
-    # Tempo/drum should not silently produce an empty marker set. If the tuned
-    # detector cannot establish a beat grid, fall back to the exact tracker that
-    # powered the first working OpenBeats version.
     if selected_frames.size == 0 and options.mode in {"tempo", "drum"}:
         result_bpm, selected_frames, selected_hop = _legacy_tempo_frames(audio, sample_rate)
 
