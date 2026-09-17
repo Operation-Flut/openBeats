@@ -9,6 +9,10 @@ from pathlib import Path
 from openbeats.analyzer import BeatAnalysis
 
 _AUDIO_NAME = re.compile(r"^OpenBeats_([A-Za-z0-9-]{4,80})\.wav$", re.IGNORECASE)
+_SELECTION_NAME = re.compile(
+    r"^OpenBeatsSelect_([A-Za-z0-9-]{4,80})__([0-9]+(?:-[0-9]+)*)\.wav$",
+    re.IGNORECASE,
+)
 
 
 def local_root() -> Path:
@@ -27,6 +31,22 @@ def sessions_root() -> Path:
 def session_id_from_audio(path: str | Path) -> str | None:
     match = _AUDIO_NAME.match(Path(path).name)
     return match.group(1) if match else None
+
+
+@dataclass(frozen=True, slots=True)
+class TrackSelectionRequest:
+    session_id: str
+    track_indices: tuple[int, ...]
+
+
+def track_selection_request_from_audio(path: str | Path) -> TrackSelectionRequest | None:
+    match = _SELECTION_NAME.match(Path(path).name)
+    if not match:
+        return None
+    tracks = tuple(int(value) for value in match.group(2).split("-") if int(value) > 0)
+    if not tracks:
+        return None
+    return TrackSelectionRequest(session_id=match.group(1), track_indices=tracks)
 
 
 def session_root(session_id: str) -> Path:
@@ -56,6 +76,14 @@ def result_lua(analysis: BeatAnalysis) -> str:
         f"  beats = {{ {beats} }},\n"
         "}\n"
     )
+
+
+def selection_lua(track_index: int | None) -> str:
+    if track_index is None:
+        return 'return { status = "cancelled" }\n'
+    if track_index < 1:
+        raise ValueError("Track index must be positive")
+    return f'return {{ status = "ok", track = {track_index} }}\n'
 
 
 def error_lua(message: str) -> str:
