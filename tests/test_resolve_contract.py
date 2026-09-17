@@ -17,9 +17,15 @@ def test_lua_launcher_uses_free_compatible_handoff() -> None:
         "AddRenderJob",
         "StartRendering",
         "OpenBeatsSelect_",
+        '".drt"',
+        '"mp4"',
+        'AudioCodec = "aac"',
         "pcall(dofile",
         "AddMarker",
         '"openbeats.beat.v1"',
+        "OpenBeats.LauncherStage",
+        "GetCurrentPage",
+        "OpenPage",
     )
     for token in required:
         assert token in launcher
@@ -43,6 +49,7 @@ def test_lua_launcher_avoids_studio_only_ui_and_external_process_io() -> None:
         "ffi.",
         "RunScript(",
         "DaVinciResolveScript",
+        "pickWavCodec",
     )
     for token in forbidden:
         assert token not in executable
