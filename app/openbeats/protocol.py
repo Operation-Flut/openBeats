@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from openbeats.analyzer import BeatAnalysis
+from openbeats.settings import BeatSettings
 
 _AUDIO_NAME = re.compile(
     r"^OpenBeats_([A-Za-z0-9-]{4,80})\.(?:wav|mp4|mov|m4a)$",
@@ -68,14 +69,18 @@ def _lua_string(value: str) -> str:
     return f'"{escaped}"'
 
 
-def result_lua(analysis: BeatAnalysis) -> str:
+def result_lua(analysis: BeatAnalysis, settings: BeatSettings | None = None) -> str:
     bpm = analysis.bpm if math.isfinite(analysis.bpm) else 0.0
     beats = ", ".join(f"{value:.9f}" for value in analysis.beats)
+    marker_color = settings.marker_color if settings is not None else "Blue"
+    marker_name = settings.marker_name if settings is not None else "Beat"
     return (
         "return {\n"
         '  status = "ok",\n'
         f"  bpm = {bpm:.6f},\n"
         f"  duration = {analysis.duration:.9f},\n"
+        f"  marker_color = {_lua_string(marker_color)},\n"
+        f"  marker_name = {_lua_string(marker_name)},\n"
         f"  beats = {{ {beats} }},\n"
         "}\n"
     )
