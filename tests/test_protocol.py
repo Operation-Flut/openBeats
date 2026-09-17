@@ -11,6 +11,7 @@ from openbeats.protocol import (
     track_selection_request_from_audio,
     update_stability,
 )
+from openbeats.settings import BeatSettings
 
 
 def test_session_id_from_audio() -> None:
@@ -40,6 +41,17 @@ def test_result_lua_serializes_analysis() -> None:
     assert "bpm = 120.000000" in text
     assert "0.500000000" in text
     assert "1.000000000" in text
+    assert 'marker_color = "Blue"' in text
+    assert 'marker_name = "Beat"' in text
+
+
+def test_result_lua_serializes_custom_marker_style() -> None:
+    text = result_lua(
+        BeatAnalysis(bpm=128.0, beats=(0.25,), duration=1.0),
+        BeatSettings(marker_color="Red", marker_name='Kick "Hit"'),
+    )
+    assert 'marker_color = "Red"' in text
+    assert 'marker_name = "Kick \\"Hit\\""' in text
 
 
 def test_error_lua_escapes_strings() -> None:
