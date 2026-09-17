@@ -4,6 +4,7 @@ from pathlib import Path
 
 import numpy as np
 from openbeats import analyzer
+from openbeats.settings import BeatSettings
 
 
 def test_snap_beat_frames_prefers_nearest_onset() -> None:
@@ -16,6 +17,8 @@ def test_snap_beat_frames_prefers_nearest_onset() -> None:
         np.array([103, 110]),
         onset_envelope,
         48000,
+        256,
+        0.07,
     )
 
     assert refined.tolist() == [103]
@@ -31,26 +34,25 @@ def test_snap_beat_frames_uses_stronger_onset_for_equal_distance() -> None:
         np.array([98, 102]),
         onset_envelope,
         48000,
+        256,
+        0.07,
     )
 
     assert refined.tolist() == [102]
 
 
-def test_snap_beat_frames_keeps_grid_when_no_onset_is_nearby() -> None:
-    onset_envelope = np.zeros(300, dtype=float)
-    onset_envelope[200] = 1.0
-
-    refined = analyzer._snap_beat_frames_to_onsets(
-        np.array([100]),
-        np.array([200]),
-        onset_envelope,
-        48000,
-    )
-
-    assert refined.tolist() == [100]
+def test_accuracy_profiles_use_finer_hops() -> None:
+    assert analyzer._accuracy_profile("fast")[0] == 512
+    assert analyzer._accuracy_profile("balanced")[0] == 256
+    assert analyzer._accuracy_profile("precise")[0] == 128
 
 
-def test_analyze_file_normalizes_tempo_and_refines_beats(monkeypatch, tmp_path: Path) -> None:
+def test_higher_sensitivity_uses_lower_onset_threshold() -> None:
+    assert analyzer._onset_delta(90) < analyzer._onset_delta(50)
+    assert analyzer._onset_delta(50) < analyzer._onset_delta(10)
+
+
+def test_analyze_file_refines_tempo_beats(monkeypatch, tmp_path: Path) -> None:
     source = tmp_path / "song.wav"
     source.write_bytes(b"fake audio")
 
@@ -62,10 +64,10 @@ def test_analyze_file_normalizes_tempo_and_refines_beats(monkeypatch, tmp_path: 
     monkeypatch.setattr(
         analyzer,
         "_percussive_signal",
-        lambda audio: audio,
+        lambda audio, *_args, **_kwargs: audio,
     )
 
-    onset_envelope = np.zeros(300, dtype=float)
+    onset_envelope = np.zeros(500, dtype=float)
     onset_envelope[48] = 0.8
     onset_envelope[95] = 0.9
     onset_envelope[142] = 1.0
@@ -85,18 +87,63 @@ def test_analyze_file_normalizes_tempo_and_refines_beats(monkeypatch, tmp_path: 
         lambda **_kwargs: np.array([48, 95, 142]),
     )
 
-    result = analyzer.analyze_file(source)
+    settings = BeatSettings(accuracy="balanced")
+    result = analyzer.analyze_file(source, settings)
 
     expected = tuple(
         float(value)
         for value in analyzer.librosa.frames_to_time(
             np.array([48, 95, 142]),
             sr=48000,
-            hop_length=analyzer._HOP_LENGTH,
+            hop_length=256,
         )
     )
     assert result.bpm == 128.0
     assert result.duration == 1.0
+    assert result.beats == expected
+
+
+def test_onset_mode_and_interval_use_transients(monkeypatch, tmp_path: Path) -> None:
+    source = tmp_path / "song.wav"
+    source.write_bytes(b"fake audio")
+    monkeypatch.setattr(
+        analyzer,
+        "_load_audio",
+        lambda *_args, **_kwargs: (np.ones(48000, dtype=np.float32), 48000),
+    )
+    monkeypatch.setattr(
+        analyzer,
+        "_percussive_signal",
+        lambda audio, *_args, **_kwargs: audio,
+    )
+    monkeypatch.setattr(
+        analyzer.librosa.onset,
+        "onset_strength",
+        lambda **_kwargs: np.ones(500, dtype=float),
+    )
+    monkeypatch.setattr(
+        analyzer.librosa.beat,
+        "beat_track",
+        lambda **_kwargs: (np.array([120.0]), np.array([10, 20, 30, 40])),
+    )
+    monkeypatch.setattr(
+        analyzer.librosa.onset,
+        "onset_detect",
+        lambda **_kwargs: np.array([12, 24, 36, 48]),
+    )
+
+    result = analyzer.analyze_file(
+        source,
+        BeatSettings(mode="onset", interval=2, accuracy="fast"),
+    )
+    expected = tuple(
+        float(value)
+        for value in analyzer.librosa.frames_to_time(
+            np.array([12, 36]),
+            sr=48000,
+            hop_length=512,
+        )
+    )
     assert result.beats == expected
 
 
