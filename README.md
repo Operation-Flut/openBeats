@@ -25,11 +25,13 @@ Implemented:
 - replacement of previous OpenBeats markers inside the analyzed range
 - protection against overwriting user markers at occupied frames
 - local background analysis agent and heartbeat
-- unit tests, Resolve sandbox contract tests, and GitHub Actions CI
+- Windows PyInstaller application bundle
+- Inno Setup per-user installer
+- automatic background-agent startup at Windows login
+- unit tests, Resolve sandbox contract tests, packaging contract tests, and GitHub Actions CI
 
-Not yet production-ready:
+Still to validate before a first release:
 
-- packaged Windows installer / automatic startup registration
 - real Resolve 21.1 Free integration test on Windows
 - dynamic-tempo mode and downbeat/bar markers
 - user settings for marker color/name/sensitivity
@@ -61,6 +63,36 @@ If the background agent is not running, start it manually:
 openbeats-agent
 ```
 
+## Windows dev installer
+
+A Windows installer is built by GitHub Actions as the artifact `OpenBeats-Windows-Dev-Installer`.
+
+To build it locally, install Python 3.12 and Inno Setup 6, then run:
+
+```powershell
+.\scripts\build-installer.ps1
+```
+
+The resulting installer is written to:
+
+```text
+installer\output\OpenBeatsSetup-0.1.0-dev-x64.exe
+```
+
+The installer:
+
+- installs the packaged OpenBeats agent under `%LOCALAPPDATA%\Programs\OpenBeats`
+- installs `OpenBeats.lua` into both supported Resolve Utility-script locations
+- registers the OpenBeats agent under the current user's Windows startup key
+- starts the agent immediately after installation
+- requires no administrator privileges
+
+Build only the packaged application with:
+
+```powershell
+.\scripts\build.ps1
+```
+
 Run checks locally with:
 
 ```powershell
@@ -74,5 +106,9 @@ pytest
 - `app/openbeats/analyzer.py` - beat detection
 - `app/openbeats/agent.py` - local handoff agent
 - `app/openbeats/protocol.py` - session/result protocol
-- `scripts/install-dev.ps1` - development installation into Resolve
-- `tests/` - unit and Resolve Free contract tests
+- `app/openbeats_launcher.py` - packaged Windows agent entrypoint
+- `scripts/install-dev.ps1` - source-based development installation into Resolve
+- `scripts/build.ps1` - PyInstaller Windows bundle
+- `scripts/build-installer.ps1` - one-command Windows installer build
+- `installer/OpenBeats.iss` - Inno Setup definition
+- `tests/` - unit, Resolve Free, and packaging contract tests
