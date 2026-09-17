@@ -4,6 +4,7 @@ import argparse
 import contextlib
 import os
 import signal
+import subprocess
 import sys
 import time
 import traceback
@@ -17,86 +18,38 @@ from openbeats.protocol import (
     exchange_root,
     local_root,
     result_lua,
-    selection_lua,
     session_id_from_audio,
     session_root,
     track_selection_request_from_audio,
     update_stability,
     write_atomic_text,
 )
+from openbeats.settings import load_session_settings
 
 _HEARTBEAT_INTERVAL = 2.0
 _SUPPORTED_EXCHANGE_SUFFIXES = {".wav", ".mp4", ".mov", ".m4a", ".drt"}
 
 
-def choose_audio_track(track_indices: tuple[int, ...]) -> int | None:
-    """Show the track picker outside Resolve so Resolve Free never needs UIManager."""
-    try:
-        import tkinter as tk
-        from tkinter import ttk
-    except Exception as exc:  # pragma: no cover - platform packaging failure
-        raise RuntimeError(f"Windows track picker is unavailable: {exc}") from exc
-
-    if not track_indices:
-        raise ValueError("No audio tracks were supplied to the track picker.")
-    if len(track_indices) == 1:
-        return track_indices[0]
-
-    selected: dict[str, int | None] = {"track": None}
-    root = tk.Tk()
-    root.title("OpenBeats — Choose Audio Track")
-    root.resizable(False, False)
-
-    frame = ttk.Frame(root, padding=18)
-    frame.grid(row=0, column=0, sticky="nsew")
-    ttk.Label(
-        frame,
-        text="Choose the DaVinci Resolve audio track to analyze:",
-    ).grid(row=0, column=0, columnspan=2, sticky="w", pady=(0, 10))
-
-    labels = [f"A{index}" for index in track_indices]
-    variable = tk.StringVar(value=labels[0])
-    combo = ttk.Combobox(
-        frame,
-        state="readonly",
-        textvariable=variable,
-        values=labels,
-        width=28,
-    )
-    combo.grid(row=1, column=0, columnspan=2, sticky="ew", pady=(0, 14))
-    combo.current(0)
-
-    def cancel() -> None:
-        selected["track"] = None
-        root.destroy()
-
-    def accept() -> None:
-        value = variable.get().strip()
-        if value.startswith("A") and value[1:].isdigit():
-            candidate = int(value[1:])
-            if candidate in track_indices:
-                selected["track"] = candidate
-        root.destroy()
-
-    ttk.Button(frame, text="Cancel", command=cancel).grid(row=2, column=0, padx=(0, 8))
-    ttk.Button(frame, text="Generate Beat Markers", command=accept).grid(row=2, column=1)
-
-    root.protocol("WM_DELETE_WINDOW", cancel)
-    root.bind("<Escape>", lambda _event: cancel())
-    root.bind("<Return>", lambda _event: accept())
-    root.update_idletasks()
-
-    width = root.winfo_reqwidth()
-    height = root.winfo_reqheight()
-    x = max(0, (root.winfo_screenwidth() - width) // 2)
-    y = max(0, (root.winfo_screenheight() - height) // 2)
-    root.geometry(f"{width}x{height}+{x}+{y}")
-    root.attributes("-topmost", True)
-    root.after(250, lambda: root.attributes("-topmost", False))
-    root.focus_force()
-    combo.focus_set()
-    root.mainloop()
-    return selected["track"]
+def _settings_ui_command(request: TrackSelectionRequest) -> list[str]:
+    tracks = ",".join(str(value) for value in request.track_indices)
+    if getattr(sys, "frozen", False):
+        return [
+            sys.executable,
+            "--settings-ui",
+            "--session",
+            request.session_id,
+            "--tracks",
+            tracks,
+        ]
+    return [
+        sys.executable,
+        "-m",
+        "openbeats.settings_ui",
+        "--session",
+        request.session_id,
+        "--tracks",
+        tracks,
+    ]
 
 
 class BeatAgent:
@@ -172,15 +125,30 @@ class BeatAgent:
     def _process_selection(self, trigger_path: Path, request: TrackSelectionRequest) -> None:
         destination = session_root(request.session_id) / "selection.lua"
         try:
-            selected = choose_audio_track(request.track_indices)
-            response = selection_lua(selected)
+            completed = subprocess.run(
+                _settings_ui_command(request),
+                check=False,
+                timeout=3600,
+            )
+            if completed.returncode != 0 and not destination.is_file():
+                write_atomic_text(
+                    destination,
+                    error_lua(
+                        "OpenBeats settings window exited with code "
+                        f"{completed.returncode}."
+                    ),
+                )
+            elif not destination.is_file():
+                write_atomic_text(
+                    destination,
+                    error_lua("OpenBeats settings window closed without a response."),
+                )
         except Exception as exc:
             detail = f"{type(exc).__name__}: {exc}"
-            response = error_lua(detail)
+            write_atomic_text(destination, error_lua(detail))
             traceback.print_exc()
 
         try:
-            write_atomic_text(destination, response)
             self._processed.add(trigger_path)
         finally:
             with contextlib.suppress(OSError):
@@ -190,7 +158,8 @@ class BeatAgent:
     def _process(self, audio_path: Path, session_id: str) -> None:
         destination = session_root(session_id) / "result.lua"
         try:
-            analysis = analyze_file(audio_path)
+            settings = load_session_settings(session_id)
+            analysis = analyze_file(audio_path, settings)
             response = result_lua(analysis)
         except Exception as exc:
             detail = f"{type(exc).__name__}: {exc}"
