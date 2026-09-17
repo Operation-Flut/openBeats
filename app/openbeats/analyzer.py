@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import subprocess
+import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
+import imageio_ffmpeg
 import librosa
 import numpy as np
 
@@ -24,6 +27,43 @@ def _tempo_scalar(value: object) -> float:
     return result
 
 
+def _load_audio(source: Path) -> tuple[np.ndarray, int]:
+    """Load WAV directly and decode Resolve containers through bundled ffmpeg."""
+    if source.suffix.lower() == ".wav":
+        return librosa.load(source, sr=None, mono=True)
+
+    ffmpeg = imageio_ffmpeg.get_ffmpeg_exe()
+    with tempfile.TemporaryDirectory(prefix="openbeats-audio-") as temp_dir:
+        decoded = Path(temp_dir) / "decoded.wav"
+        completed = subprocess.run(
+            [
+                ffmpeg,
+                "-nostdin",
+                "-hide_banner",
+                "-loglevel",
+                "error",
+                "-y",
+                "-i",
+                str(source),
+                "-vn",
+                "-ac",
+                "1",
+                "-ar",
+                "48000",
+                "-c:a",
+                "pcm_s16le",
+                str(decoded),
+            ],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        if completed.returncode != 0 or not decoded.is_file():
+            detail = (completed.stderr or completed.stdout or "ffmpeg decode failed").strip()
+            raise RuntimeError(f"Could not decode Resolve audio render: {detail}")
+        return librosa.load(decoded, sr=None, mono=True)
+
+
 def analyze_file(path: str | Path) -> BeatAnalysis:
     """Detect musical beats in an audio file and return timestamps in seconds."""
 
@@ -31,7 +71,7 @@ def analyze_file(path: str | Path) -> BeatAnalysis:
     if not source.is_file():
         raise FileNotFoundError(source)
 
-    audio, sample_rate = librosa.load(source, sr=None, mono=True)
+    audio, sample_rate = _load_audio(source)
     if sample_rate <= 0:
         raise RuntimeError("Audio decoder returned an invalid sample rate.")
 
@@ -61,7 +101,6 @@ def analyze_file(path: str | Path) -> BeatAnalysis:
         timestamp = float(value)
         if not np.isfinite(timestamp) or timestamp < 0 or timestamp > duration + 0.05:
             continue
-        # Protect Resolve from duplicate markers caused by numerically identical detections.
         if previous >= 0 and abs(timestamp - previous) < 1e-5:
             continue
         cleaned.append(timestamp)
