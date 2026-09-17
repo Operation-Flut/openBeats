@@ -159,6 +159,26 @@ def _filter_beat_strength(
     return filtered if filtered.size >= 2 else valid
 
 
+def _legacy_tempo_frames(audio: np.ndarray, sample_rate: int) -> tuple[float, np.ndarray, int]:
+    """Proven fallback used by the first working OpenBeats builds."""
+    hop_length = 512
+    onset_envelope = librosa.onset.onset_strength(
+        y=audio,
+        sr=sample_rate,
+        hop_length=hop_length,
+        aggregate=np.median,
+    )
+    tempo, frames = librosa.beat.beat_track(
+        onset_envelope=onset_envelope,
+        sr=sample_rate,
+        hop_length=hop_length,
+        units="frames",
+        trim=False,
+        sparse=True,
+    )
+    return _tempo_scalar(tempo), np.asarray(frames, dtype=int).reshape(-1), hop_length
+
+
 def _clean_times(values: object, duration: float) -> tuple[float, ...]:
     cleaned: list[float] = []
     previous = -1.0
@@ -189,13 +209,18 @@ def analyze_file(path: str | Path, settings: BeatSettings | None = None) -> Beat
     if len(audio) == 0 or not np.any(np.abs(audio) > 1e-8):
         return BeatAnalysis(bpm=0.0, beats=(), duration=duration)
 
-    rhythmic_audio = _percussive_signal(
-        audio,
-        hop_length,
-        4.0 if options.mode == "drum" else 3.0,
+    # Tempo mode intentionally analyzes the full mix. HPSS can remove too much
+    # useful rhythmic information from melodic tracks and was a regression from
+    # the first working OpenBeats analyzer. Drum mode is the explicit opt-in for
+    # percussion-focused separation.
+    analysis_audio = (
+        _percussive_signal(audio, hop_length, 4.0)
+        if options.mode == "drum"
+        else audio
     )
+
     onset_kwargs: dict[str, object] = {
-        "y": rhythmic_audio,
+        "y": analysis_audio,
         "sr": sample_rate,
         "hop_length": hop_length,
         "aggregate": np.median,
@@ -244,16 +269,25 @@ def analyze_file(path: str | Path, settings: BeatSettings | None = None) -> Beat
             )
 
     selected_frames = np.asarray(selected_frames, dtype=int).reshape(-1)
+    selected_hop = hop_length
+    result_bpm = _tempo_scalar(tempo)
+
+    # Tempo/drum should not silently produce an empty marker set. If the tuned
+    # detector cannot establish a beat grid, fall back to the exact tracker that
+    # powered the first working OpenBeats version.
+    if selected_frames.size == 0 and options.mode in {"tempo", "drum"}:
+        result_bpm, selected_frames, selected_hop = _legacy_tempo_frames(audio, sample_rate)
+
     if options.interval > 1:
         selected_frames = selected_frames[:: options.interval]
 
     beat_times = librosa.frames_to_time(
         selected_frames,
         sr=sample_rate,
-        hop_length=hop_length,
+        hop_length=selected_hop,
     )
     return BeatAnalysis(
-        bpm=_tempo_scalar(tempo),
+        bpm=result_bpm,
         beats=_clean_times(beat_times, duration),
         duration=duration,
     )
