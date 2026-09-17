@@ -24,7 +24,7 @@ from openbeats.protocol import (
     update_stability,
     write_atomic_text,
 )
-from openbeats.settings import load_session_settings
+from openbeats.settings import load_session_settings, session_settings_path
 
 _HEARTBEAT_INTERVAL = 2.0
 _SUPPORTED_EXCHANGE_SUFFIXES = {".wav", ".mp4", ".mov", ".m4a", ".drt"}
@@ -49,6 +49,25 @@ def _settings_ui_command(request: TrackSelectionRequest) -> list[str]:
         request.session_id,
         "--tracks",
         tracks,
+    ]
+
+
+def _analysis_settings_command(session_id: str) -> list[str]:
+    if getattr(sys, "frozen", False):
+        return [
+            sys.executable,
+            "--settings-ui",
+            "--analysis-only",
+            "--session",
+            session_id,
+        ]
+    return [
+        sys.executable,
+        "-m",
+        "openbeats.settings_ui",
+        "--analysis-only",
+        "--session",
+        session_id,
     ]
 
 
@@ -155,12 +174,30 @@ class BeatAgent:
                 trigger_path.unlink(missing_ok=True)
             self._stability.pop(trigger_path, None)
 
+    def _ensure_analysis_settings(self, session_id: str) -> bool:
+        settings_path = session_settings_path(session_id)
+        if settings_path.is_file():
+            return True
+        try:
+            completed = subprocess.run(
+                _analysis_settings_command(session_id),
+                check=False,
+                timeout=3600,
+            )
+        except Exception:
+            traceback.print_exc()
+            return False
+        return completed.returncode == 0 and settings_path.is_file()
+
     def _process(self, audio_path: Path, session_id: str) -> None:
         destination = session_root(session_id) / "result.lua"
         try:
-            settings = load_session_settings(session_id)
-            analysis = analyze_file(audio_path, settings)
-            response = result_lua(analysis)
+            if not self._ensure_analysis_settings(session_id):
+                response = error_lua("Beat generation was cancelled in the settings window.")
+            else:
+                settings = load_session_settings(session_id)
+                analysis = analyze_file(audio_path, settings)
+                response = result_lua(analysis)
         except Exception as exc:
             detail = f"{type(exc).__name__}: {exc}"
             response = error_lua(detail)
