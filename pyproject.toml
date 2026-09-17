@@ -19,6 +19,12 @@ dependencies = [
   "platformdirs>=4.3,<5",
 ]
 
+[project.urls]
+Homepage = "https://github.com/ninocss/openbeats"
+Repository = "https://github.com/ninocss/openbeats"
+Issues = "https://github.com/ninocss/openbeats/issues"
+Releases = "https://github.com/ninocss/openbeats/releases"
+
 [project.optional-dependencies]
 dev = [
   "pytest>=8.3,<9",
