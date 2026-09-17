@@ -8,7 +8,6 @@ $Root = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 $LuaSource = Join-Path $Root "resolve\OpenBeats.lua"
 $VenvPath = Join-Path $Root ".venv-dev"
 $VenvPython = Join-Path $VenvPath "Scripts\python.exe"
-$VenvPythonW = Join-Path $VenvPath "Scripts\pythonw.exe"
 
 function Invoke-Native([string]$FilePath, [string[]]$Arguments) {
     & $FilePath @Arguments
@@ -26,13 +25,14 @@ function Stop-OpenBeatsAgents {
         $pythonProcesses = Get-CimInstance Win32_Process -ErrorAction Stop | Where-Object {
             ($_.Name -ieq "python.exe" -or $_.Name -ieq "pythonw.exe") -and
             $_.CommandLine -and
-            $_.CommandLine -like "*openbeats.agent*"
+            ($_.CommandLine -like "*openbeats.agent*" -or
+             $_.CommandLine -like "*openbeats.settings_ui*")
         }
         foreach ($process in $pythonProcesses) {
             Stop-Process -Id $process.ProcessId -Force -ErrorAction SilentlyContinue
         }
     } catch {
-        Write-Warning "Could not enumerate old Python OpenBeats agents: $($_.Exception.Message)"
+        Write-Warning "Could not enumerate old Python OpenBeats processes: $($_.Exception.Message)"
     }
 }
 
@@ -61,6 +61,12 @@ Invoke-Native $VenvPython @("-m", "pip", "install", "--upgrade", "pip")
 Write-Host "Installing OpenBeats Python package..."
 Invoke-Native $VenvPython @("-m", "pip", "install", "-e", $Root)
 
+Write-Host "Checking Kivy settings UI dependencies..."
+Invoke-Native $VenvPython @(
+    "-c",
+    "import kivy; import openbeats.settings_ui; print('Kivy settings UI import OK')"
+)
+
 $scriptDirs = @(
     (Join-Path $env:APPDATA "Blackmagic Design\DaVinci Resolve\Support\Fusion\Scripts\Utility"),
     (Join-Path $env:APPDATA "Blackmagic Design\DaVinci Resolve\Fusion\Scripts\Utility")
@@ -80,12 +86,12 @@ if ($StartAgent) {
     Write-Host "Restarting OpenBeats agent..."
     Stop-OpenBeatsAgents
     Start-Sleep -Milliseconds 250
-    if (Test-Path $VenvPythonW) {
-        Start-Process -FilePath $VenvPythonW -ArgumentList "-m", "openbeats.agent"
-    } else {
-        Start-Process -FilePath $VenvPython -ArgumentList "-m", "openbeats.agent" -WindowStyle Hidden
-    }
+    Start-Process `
+        -FilePath $VenvPython `
+        -ArgumentList "-m", "openbeats.agent" `
+        -WindowStyle Hidden
 }
 
 Write-Host "OpenBeats development install complete. Restart DaVinci Resolve before testing."
 Write-Host "Agent command: $VenvPython -m openbeats.agent"
+Write-Host "Settings UI log: $localRoot\settings-ui.log"
