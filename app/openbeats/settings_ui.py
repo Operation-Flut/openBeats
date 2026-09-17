@@ -15,9 +15,11 @@ from kivy.metrics import dp
 from kivy.uix.boxlayout import BoxLayout
 from kivy.uix.button import Button
 from kivy.uix.label import Label
+from kivy.uix.scrollview import ScrollView
 from kivy.uix.slider import Slider
 from kivy.uix.spinner import Spinner
 from kivy.uix.switch import Switch
+from kivy.uix.textinput import TextInput
 from kivy.uix.togglebutton import ToggleButton
 
 from openbeats.protocol import selection_lua, session_root, write_atomic_text
@@ -35,6 +37,49 @@ _TEXT = (0.94, 0.95, 0.98, 1)
 _MUTED = (0.60, 0.64, 0.72, 1)
 _ACCENT = (0.18, 0.55, 0.98, 1)
 _BUTTON = (0.13, 0.15, 0.19, 1)
+
+_PRESETS: dict[str, dict[str, object]] = {
+    "Balanced": {
+        "mode": "tempo",
+        "sensitivity": 55,
+        "interval": 1,
+        "accuracy": "precise",
+        "snap": True,
+        "min_gap_ms": 120,
+    },
+    "Clean": {
+        "mode": "tempo",
+        "sensitivity": 40,
+        "interval": 1,
+        "accuracy": "balanced",
+        "snap": True,
+        "min_gap_ms": 180,
+    },
+    "Drums": {
+        "mode": "drum",
+        "sensitivity": 65,
+        "interval": 1,
+        "accuracy": "precise",
+        "snap": True,
+        "min_gap_ms": 100,
+    },
+    "Dense": {
+        "mode": "onset",
+        "sensitivity": 70,
+        "interval": 1,
+        "accuracy": "balanced",
+        "snap": True,
+        "min_gap_ms": 90,
+    },
+    "Bars": {
+        "mode": "tempo",
+        "sensitivity": 55,
+        "interval": 4,
+        "accuracy": "precise",
+        "snap": True,
+        "min_gap_ms": 120,
+    },
+}
 
 
 class Card(BoxLayout):
@@ -111,33 +156,51 @@ class OpenBeatsSettingsApp(App):
         self._track_spinner: Spinner | None = None
         self._sensitivity: Slider | None = None
         self._sensitivity_value: Label | None = None
+        self._min_gap: Slider | None = None
+        self._min_gap_value: Label | None = None
         self._snap_switch: Switch | None = None
+        self._color_spinner: Spinner | None = None
+        self._name_input: TextInput | None = None
         self._mode_buttons: dict[str, ChoiceButton] = {}
         self._interval_buttons: dict[int, ChoiceButton] = {}
         self._accuracy_buttons: dict[str, ChoiceButton] = {}
 
     def build(self) -> BoxLayout:
         Window.clearcolor = _BG
-        Window.size = (760, 700)
+        Window.size = (780, 820)
         try:
             Window.minimum_width = 700
-            Window.minimum_height = 640
+            Window.minimum_height = 650
             Window.always_on_top = True
         except Exception:
             pass
 
         root = BoxLayout(
             orientation="vertical",
-            spacing=dp(14),
+            spacing=dp(12),
             padding=[dp(22), dp(18), dp(22), dp(18)],
         )
         root.add_widget(_text("OpenBeats", size="28sp", bold=True))
         root.add_widget(_text("Beat Detection Settings", size="15sp", color=_MUTED))
-        root.add_widget(self._track_card())
-        root.add_widget(self._mode_card())
-        root.add_widget(self._sensitivity_card())
-        root.add_widget(self._interval_card())
-        root.add_widget(self._accuracy_card())
+
+        scroll = ScrollView(do_scroll_x=False, bar_width=dp(8))
+        content = BoxLayout(
+            orientation="vertical",
+            spacing=dp(12),
+            size_hint_y=None,
+            padding=[0, 0, dp(6), 0],
+        )
+        content.bind(minimum_height=content.setter("height"))
+        content.add_widget(self._preset_card())
+        content.add_widget(self._track_card())
+        content.add_widget(self._mode_card())
+        content.add_widget(self._sensitivity_card())
+        content.add_widget(self._interval_card())
+        content.add_widget(self._accuracy_card())
+        content.add_widget(self._anti_clutter_card())
+        content.add_widget(self._marker_card())
+        scroll.add_widget(content)
+        root.add_widget(scroll)
 
         actions = BoxLayout(size_hint_y=None, height=dp(46), spacing=dp(10))
         cancel = Button(
@@ -169,6 +232,23 @@ class OpenBeatsSettingsApp(App):
             height=dp(height),
         )
 
+    def _preset_card(self) -> Card:
+        card = self._card(92)
+        card.add_widget(_text("Quick presets", bold=True))
+        row = BoxLayout(size_hint_y=None, height=dp(36), spacing=dp(7))
+        for title in _PRESETS:
+            button = Button(
+                text=title,
+                background_normal="",
+                background_color=_BUTTON,
+                color=_TEXT,
+                font_size="13sp",
+            )
+            button.bind(on_release=lambda _button, name=title: self._apply_preset(name))
+            row.add_widget(button)
+        card.add_widget(row)
+        return card
+
     def _track_card(self) -> Card:
         card = self._card(88)
         card.add_widget(_text("Audio track", bold=True))
@@ -178,9 +258,7 @@ class OpenBeatsSettingsApp(App):
 
         labels = [f"A{index}" for index in self.track_indices]
         if len(labels) == 1:
-            card.add_widget(
-                _text(f"{labels[0]}  ·  selected automatically", color=_MUTED)
-            )
+            card.add_widget(_text(f"{labels[0]}  ·  selected automatically", color=_MUTED))
         else:
             self._track_spinner = Spinner(
                 text=labels[0],
@@ -260,7 +338,7 @@ class OpenBeatsSettingsApp(App):
         card.add_widget(row)
         card.add_widget(
             _text(
-                "4 beats usually corresponds to one bar in 4/4 music.",
+                "Every 4 is useful for bar-like markers in regular 4/4 tracks.",
                 size="12sp",
                 color=_MUTED,
             )
@@ -281,9 +359,7 @@ class OpenBeatsSettingsApp(App):
         card.add_widget(row)
 
         snap_row = BoxLayout(size_hint_y=None, height=dp(34), spacing=dp(8))
-        snap_row.add_widget(
-            _text("Snap detected beats to nearby audio transients", size="12sp")
-        )
+        snap_row.add_widget(_text("Snap detected beats to nearby audio transients", size="12sp"))
         self._snap_switch = Switch(
             active=self.defaults.snap_to_transients,
             size_hint_x=None,
@@ -300,9 +376,95 @@ class OpenBeatsSettingsApp(App):
         )
         return card
 
+    def _anti_clutter_card(self) -> Card:
+        card = self._card(108)
+        header = BoxLayout(size_hint_y=None, height=dp(28))
+        header.add_widget(_text("Minimum marker gap", bold=True))
+        self._min_gap_value = _text(
+            f"{self.defaults.min_gap_ms} ms",
+            color=_ACCENT,
+            bold=True,
+        )
+        self._min_gap_value.halign = "right"
+        header.add_widget(self._min_gap_value)
+        card.add_widget(header)
+        self._min_gap = Slider(
+            min=0,
+            max=500,
+            value=self.defaults.min_gap_ms,
+            step=10,
+            cursor_size=(dp(20), dp(20)),
+        )
+        self._min_gap.bind(value=self._update_min_gap)
+        card.add_widget(self._min_gap)
+        card.add_widget(
+            _text(
+                "Nearby events are merged; the stronger transient wins.",
+                size="12sp",
+                color=_MUTED,
+            )
+        )
+        return card
+
+    def _marker_card(self) -> Card:
+        card = self._card(122)
+        card.add_widget(_text("Marker appearance", bold=True))
+        row = BoxLayout(size_hint_y=None, height=dp(38), spacing=dp(10))
+        self._name_input = TextInput(
+            text=self.defaults.marker_name,
+            multiline=False,
+            size_hint_x=0.66,
+            background_normal="",
+            background_active="",
+            background_color=_BUTTON,
+            foreground_color=_TEXT,
+            cursor_color=_TEXT,
+            padding=[dp(10), dp(8)],
+        )
+        self._color_spinner = Spinner(
+            text=self.defaults.marker_color,
+            values=("Blue", "Cyan", "Green", "Yellow", "Red", "Pink", "Purple"),
+            size_hint_x=0.34,
+            background_normal="",
+            background_color=_BUTTON,
+            color=_TEXT,
+        )
+        row.add_widget(self._name_input)
+        row.add_widget(self._color_spinner)
+        card.add_widget(row)
+        card.add_widget(
+            _text(
+                "Name and color are applied to the Resolve timeline markers.",
+                size="12sp",
+                color=_MUTED,
+            )
+        )
+        return card
+
+    def _apply_preset(self, name: str) -> None:
+        preset = _PRESETS.get(name)
+        if preset is None:
+            return
+        for mode, button in self._mode_buttons.items():
+            button.state = "down" if mode == preset["mode"] else "normal"
+        for interval, button in self._interval_buttons.items():
+            button.state = "down" if interval == preset["interval"] else "normal"
+        for accuracy, button in self._accuracy_buttons.items():
+            button.state = "down" if accuracy == preset["accuracy"] else "normal"
+        if self._sensitivity is not None:
+            self._sensitivity.value = int(preset["sensitivity"])
+        if self._min_gap is not None:
+            self._min_gap.value = int(preset["min_gap_ms"])
+        if self._snap_switch is not None:
+            self._snap_switch.active = bool(preset["snap"])
+
     def _update_sensitivity(self, _slider: Slider, value: float) -> None:
         if self._sensitivity_value is not None:
             self._sensitivity_value.text = str(int(round(value)))
+
+    def _update_min_gap(self, _slider: Slider, value: float) -> None:
+        if self._min_gap_value is not None:
+            self._min_gap_value.text = f"{int(round(value))} ms"
 
     @staticmethod
     def _selected(mapping: dict[object, ChoiceButton], fallback: object) -> object:
@@ -325,14 +487,22 @@ class OpenBeatsSettingsApp(App):
         sensitivity = int(
             round(self._sensitivity.value if self._sensitivity is not None else 55)
         )
-        settings = BeatSettings(
-            mode=str(self._selected(self._mode_buttons, "tempo")),
-            sensitivity=sensitivity,
-            interval=int(self._selected(self._interval_buttons, 1)),
-            accuracy=str(self._selected(self._accuracy_buttons, "precise")),
-            snap_to_transients=bool(
-                self._snap_switch.active if self._snap_switch else True
-            ),
+        min_gap_ms = int(round(self._min_gap.value if self._min_gap is not None else 120))
+        marker_name = self._name_input.text if self._name_input is not None else "Beat"
+        marker_color = self._color_spinner.text if self._color_spinner is not None else "Blue"
+        settings = BeatSettings.from_dict(
+            {
+                "mode": self._selected(self._mode_buttons, "tempo"),
+                "sensitivity": sensitivity,
+                "interval": self._selected(self._interval_buttons, 1),
+                "accuracy": self._selected(self._accuracy_buttons, "precise"),
+                "snap_to_transients": (
+                    self._snap_switch.active if self._snap_switch is not None else True
+                ),
+                "min_gap_ms": min_gap_ms,
+                "marker_color": marker_color,
+                "marker_name": marker_name,
+            }
         )
         save_user_settings(settings)
         save_session_settings(self.session_id, settings)
