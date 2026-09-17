@@ -8,9 +8,12 @@ from pathlib import Path
 
 from openbeats.analyzer import BeatAnalysis
 
-_AUDIO_NAME = re.compile(r"^OpenBeats_([A-Za-z0-9-]{4,80})\.wav$", re.IGNORECASE)
+_AUDIO_NAME = re.compile(
+    r"^OpenBeats_([A-Za-z0-9-]{4,80})\.(?:wav|mp4|mov|m4a)$",
+    re.IGNORECASE,
+)
 _SELECTION_NAME = re.compile(
-    r"^OpenBeatsSelect_([A-Za-z0-9-]{4,80})__([0-9]+(?:-[0-9]+)*)\.wav$",
+    r"^OpenBeatsSelect_([A-Za-z0-9-]{4,80})__([0-9]+(?:-[0-9]+)*)\.drt$",
     re.IGNORECASE,
 )
 
