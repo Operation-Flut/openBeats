@@ -1,6 +1,9 @@
 #define MyAppName "OpenBeats"
+#ifndef MyAppVersion
 #define MyAppVersion "0.1.0"
-#define MyAppPublisher "OpenBeats contributors"
+#endif
+#define MyAppPublisher "OpenBeats"
+#define MyAppURL "https://github.com/ninocss/openbeats"
 #define MyAppExeName "OpenBeats.exe"
 
 [Setup]
@@ -8,17 +11,21 @@ AppId={{A97D542D-18B7-4ED1-961E-70B17B384DBA}
 AppName={#MyAppName}
 AppVersion={#MyAppVersion}
 AppPublisher={#MyAppPublisher}
+AppPublisherURL={#MyAppURL}
+AppSupportURL={#MyAppURL}/issues
+AppUpdatesURL={#MyAppURL}/releases
 DefaultDirName={localappdata}\Programs\OpenBeats
 DefaultGroupName=OpenBeats
 PrivilegesRequired=lowest
 OutputDir=output
-OutputBaseFilename=OpenBeatsSetup-{#MyAppVersion}-dev-x64
+OutputBaseFilename=OpenBeatsSetup-{#MyAppVersion}-x64
 Compression=lzma2/ultra64
 SolidCompression=yes
 WizardStyle=modern
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 UninstallDisplayName=OpenBeats
+UninstallDisplayIcon={app}\{#MyAppExeName}
 LicenseFile=..\LICENSE
 SetupLogging=yes
 CloseApplications=yes
@@ -71,7 +78,7 @@ begin
     MsgBox(
       'OpenBeats is installed for DaVinci Resolve Free and Studio.' + #13#10 + #13#10 +
       'Fully quit and restart DaVinci Resolve so Workspace > Scripts is refreshed.' + #13#10 + #13#10 +
-      'Then use Workspace > Scripts > OpenBeats, choose an audio track, and generate beat markers.',
+      'Then use Workspace > Scripts > OpenBeats, configure beat detection, and generate timeline markers.',
       mbInformation,
       MB_OK
     );
