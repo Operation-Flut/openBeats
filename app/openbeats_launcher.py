@@ -56,8 +56,22 @@ def _release_windows_mutex() -> None:
         _MUTEX_HANDLE = None
 
 
+def _self_test() -> int:
+    import librosa  # noqa: F401
+    import numpy  # noqa: F401
+    import soundfile  # noqa: F401
+
+    from openbeats.analyzer import analyze_file  # noqa: F401
+    from openbeats.protocol import result_lua  # noqa: F401
+
+    return 0
+
+
 def main() -> int:
     _ensure_standard_streams()
+    if "--self-test" in sys.argv[1:]:
+        return _self_test()
+
     if not _acquire_windows_mutex():
         return 0
 
