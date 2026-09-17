@@ -17,6 +17,25 @@ function Invoke-Native([string]$FilePath, [string[]]$Arguments) {
     }
 }
 
+function Stop-OpenBeatsAgents {
+    foreach ($process in (Get-Process -Name "OpenBeats" -ErrorAction SilentlyContinue)) {
+        Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue
+    }
+
+    try {
+        $pythonProcesses = Get-CimInstance Win32_Process -ErrorAction Stop | Where-Object {
+            ($_.Name -ieq "python.exe" -or $_.Name -ieq "pythonw.exe") -and
+            $_.CommandLine -and
+            $_.CommandLine -like "*openbeats.agent*"
+        }
+        foreach ($process in $pythonProcesses) {
+            Stop-Process -Id $process.ProcessId -Force -ErrorAction SilentlyContinue
+        }
+    } catch {
+        Write-Warning "Could not enumerate old Python OpenBeats agents: $($_.Exception.Message)"
+    }
+}
+
 if (-not (Test-Path $LuaSource)) {
     throw "OpenBeats.lua not found at $LuaSource"
 }
@@ -58,7 +77,9 @@ New-Item -ItemType Directory -Path (Join-Path $localRoot "Exchange") -Force | Ou
 New-Item -ItemType Directory -Path (Join-Path $localRoot "Sessions") -Force | Out-Null
 
 if ($StartAgent) {
-    Write-Host "Starting OpenBeats agent..."
+    Write-Host "Restarting OpenBeats agent..."
+    Stop-OpenBeatsAgents
+    Start-Sleep -Milliseconds 250
     if (Test-Path $VenvPythonW) {
         Start-Process -FilePath $VenvPythonW -ArgumentList "-m", "openbeats.agent"
     } else {
