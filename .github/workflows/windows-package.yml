@@ -1,4 +1,4 @@
-name: Windows Dev Installer
+name: Windows Installer Preview
 
 on:
   workflow_dispatch:
@@ -12,6 +12,9 @@ on:
       - "scripts/build-installer.ps1"
       - "pyproject.toml"
       - ".github/workflows/windows-package.yml"
+
+permissions:
+  contents: read
 
 jobs:
   package:
@@ -34,10 +37,10 @@ jobs:
         shell: pwsh
         run: .\scripts\build-installer.ps1 -Python python
 
-      - name: Upload dev installer
+      - name: Upload installer preview
         uses: actions/upload-artifact@v4
         with:
-          name: OpenBeats-Windows-Dev-Installer
-          path: installer/output/OpenBeatsSetup-*-dev-x64.exe
+          name: OpenBeats-Windows-Installer
+          path: installer/output/OpenBeatsSetup-*-x64.exe
           if-no-files-found: error
           retention-days: 14
