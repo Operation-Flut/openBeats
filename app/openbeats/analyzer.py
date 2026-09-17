@@ -9,8 +9,7 @@ import imageio_ffmpeg
 import librosa
 import numpy as np
 
-_HOP_LENGTH = 256
-_SNAP_WINDOW_SECONDS = 0.070
+from openbeats.settings import BeatSettings
 
 
 @dataclass(frozen=True, slots=True)
@@ -31,7 +30,6 @@ def _tempo_scalar(value: object) -> float:
 
 
 def _load_audio(source: Path) -> tuple[np.ndarray, int]:
-    """Load WAV directly and decode Resolve containers through bundled ffmpeg."""
     if source.suffix.lower() == ".wav":
         return librosa.load(source, sr=None, mono=True)
 
@@ -67,14 +65,21 @@ def _load_audio(source: Path) -> tuple[np.ndarray, int]:
         return librosa.load(decoded, sr=None, mono=True)
 
 
-def _percussive_signal(audio: np.ndarray) -> np.ndarray:
-    """Prefer drum/transient energy while safely falling back to the full mix."""
+def _accuracy_profile(accuracy: str) -> tuple[int, float]:
+    if accuracy == "fast":
+        return 512, 0.050
+    if accuracy == "balanced":
+        return 256, 0.065
+    return 128, 0.080
+
+
+def _percussive_signal(audio: np.ndarray, hop_length: int, margin: float) -> np.ndarray:
     try:
         percussive = np.asarray(
             librosa.effects.percussive(
                 audio,
-                margin=3.0,
-                hop_length=_HOP_LENGTH,
+                margin=margin,
+                hop_length=hop_length,
             ),
             dtype=np.float32,
         )
@@ -91,15 +96,16 @@ def _snap_beat_frames_to_onsets(
     onset_frames: np.ndarray,
     onset_envelope: np.ndarray,
     sample_rate: int,
+    hop_length: int,
+    snap_window_seconds: float,
 ) -> np.ndarray:
-    """Align tempo-grid beats to nearby physical transients without changing the rhythm grid."""
     beats = np.asarray(beat_frames, dtype=int).reshape(-1)
     onsets = np.asarray(onset_frames, dtype=int).reshape(-1)
     envelope = np.asarray(onset_envelope, dtype=float).reshape(-1)
     if beats.size == 0 or onsets.size == 0 or envelope.size == 0:
         return beats
 
-    radius = max(1, int(round(_SNAP_WINDOW_SECONDS * sample_rate / _HOP_LENGTH)))
+    radius = max(1, int(round(snap_window_seconds * sample_rate / hop_length)))
     refined: list[int] = []
 
     for beat in beats:
@@ -108,9 +114,6 @@ def _snap_beat_frames_to_onsets(
             refined.append(int(beat))
             continue
 
-        # Prefer the closest onset. If two candidates are equally close, choose
-        # the stronger transient. This avoids snapping a beat to a loud off-beat
-        # event merely because it happens to be inside the search window.
         distances = np.abs(nearby - beat)
         best_distance = int(np.min(distances))
         closest = nearby[distances == best_distance]
@@ -128,12 +131,55 @@ def _snap_beat_frames_to_onsets(
     return np.asarray(refined, dtype=int)
 
 
-def analyze_file(path: str | Path) -> BeatAnalysis:
-    """Detect musical beats and return transient-refined timestamps in seconds."""
+def _onset_delta(sensitivity: int) -> float:
+    ratio = min(100, max(0, sensitivity)) / 100.0
+    return 0.22 - (0.19 * ratio)
 
+
+def _filter_beat_strength(
+    beat_frames: np.ndarray,
+    onset_envelope: np.ndarray,
+    sensitivity: int,
+) -> np.ndarray:
+    frames = np.asarray(beat_frames, dtype=int).reshape(-1)
+    if frames.size < 3:
+        return frames
+
+    valid = frames[(frames >= 0) & (frames < len(onset_envelope))]
+    if valid.size < 3:
+        return frames
+
+    strengths = np.asarray(onset_envelope, dtype=float)[valid]
+    percentile = max(0.0, 40.0 - (0.4 * min(100, max(0, sensitivity))))
+    if percentile <= 0:
+        return valid
+
+    threshold = float(np.percentile(strengths, percentile))
+    filtered = valid[strengths >= threshold]
+    return filtered if filtered.size >= 2 else valid
+
+
+def _clean_times(values: object, duration: float) -> tuple[float, ...]:
+    cleaned: list[float] = []
+    previous = -1.0
+    for value in np.asarray(values, dtype=float).reshape(-1):
+        timestamp = float(value)
+        if not np.isfinite(timestamp) or timestamp < 0 or timestamp > duration + 0.05:
+            continue
+        if previous >= 0 and abs(timestamp - previous) < 1e-5:
+            continue
+        cleaned.append(timestamp)
+        previous = timestamp
+    return tuple(cleaned)
+
+
+def analyze_file(path: str | Path, settings: BeatSettings | None = None) -> BeatAnalysis:
     source = Path(path)
     if not source.is_file():
         raise FileNotFoundError(source)
+
+    options = settings or BeatSettings()
+    hop_length, snap_window = _accuracy_profile(options.accuracy)
 
     audio, sample_rate = _load_audio(source)
     if sample_rate <= 0:
@@ -143,54 +189,71 @@ def analyze_file(path: str | Path) -> BeatAnalysis:
     if len(audio) == 0 or not np.any(np.abs(audio) > 1e-8):
         return BeatAnalysis(bpm=0.0, beats=(), duration=duration)
 
-    rhythmic_audio = _percussive_signal(audio)
-    onset_envelope = librosa.onset.onset_strength(
-        y=rhythmic_audio,
-        sr=sample_rate,
-        hop_length=_HOP_LENGTH,
-        aggregate=np.median,
+    rhythmic_audio = _percussive_signal(
+        audio,
+        hop_length,
+        4.0 if options.mode == "drum" else 3.0,
     )
-    tempo, beat_frames = librosa.beat.beat_track(
+    onset_kwargs: dict[str, object] = {
+        "y": rhythmic_audio,
+        "sr": sample_rate,
+        "hop_length": hop_length,
+        "aggregate": np.median,
+    }
+    if options.mode == "drum":
+        onset_kwargs.update({"fmin": 30.0, "fmax": 320.0, "n_mels": 48})
+
+    onset_envelope = librosa.onset.onset_strength(**onset_kwargs)
+    tempo, tempo_frames = librosa.beat.beat_track(
         onset_envelope=onset_envelope,
         sr=sample_rate,
-        hop_length=_HOP_LENGTH,
+        hop_length=hop_length,
         units="frames",
         trim=False,
         sparse=True,
     )
-    onset_frames = librosa.onset.onset_detect(
-        onset_envelope=onset_envelope,
-        sr=sample_rate,
-        hop_length=_HOP_LENGTH,
-        units="frames",
-        backtrack=False,
-        sparse=True,
+    onset_frames = np.asarray(
+        librosa.onset.onset_detect(
+            onset_envelope=onset_envelope,
+            sr=sample_rate,
+            hop_length=hop_length,
+            units="frames",
+            backtrack=False,
+            sparse=True,
+            delta=_onset_delta(options.sensitivity),
+        ),
+        dtype=int,
     )
-    refined_frames = _snap_beat_frames_to_onsets(
-        np.asarray(beat_frames),
-        np.asarray(onset_frames),
-        onset_envelope,
-        sample_rate,
-    )
+
+    if options.mode == "onset":
+        selected_frames = onset_frames
+    else:
+        selected_frames = _filter_beat_strength(
+            np.asarray(tempo_frames, dtype=int),
+            onset_envelope,
+            options.sensitivity,
+        )
+        if options.snap_to_transients:
+            selected_frames = _snap_beat_frames_to_onsets(
+                selected_frames,
+                onset_frames,
+                onset_envelope,
+                sample_rate,
+                hop_length,
+                snap_window,
+            )
+
+    selected_frames = np.asarray(selected_frames, dtype=int).reshape(-1)
+    if options.interval > 1:
+        selected_frames = selected_frames[:: options.interval]
+
     beat_times = librosa.frames_to_time(
-        refined_frames,
+        selected_frames,
         sr=sample_rate,
-        hop_length=_HOP_LENGTH,
+        hop_length=hop_length,
     )
-
-    cleaned: list[float] = []
-    previous = -1.0
-    for value in np.asarray(beat_times, dtype=float).reshape(-1):
-        timestamp = float(value)
-        if not np.isfinite(timestamp) or timestamp < 0 or timestamp > duration + 0.05:
-            continue
-        if previous >= 0 and abs(timestamp - previous) < 1e-5:
-            continue
-        cleaned.append(timestamp)
-        previous = timestamp
-
     return BeatAnalysis(
         bpm=_tempo_scalar(tempo),
-        beats=tuple(cleaned),
+        beats=_clean_times(beat_times, duration),
         duration=duration,
     )
