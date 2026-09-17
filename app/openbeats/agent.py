@@ -262,7 +262,7 @@ class BeatAgent:
                     response = error_lua(message)
                     _show_windows_error(message)
                 else:
-                    response = result_lua(analysis)
+                    response = result_lua(analysis, settings)
         except Exception as exc:
             detail = f"{type(exc).__name__}: {exc}"
             _append_analysis_log(f"session={session_id} ERROR {detail}")
