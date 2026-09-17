@@ -9,6 +9,9 @@ import imageio_ffmpeg
 import librosa
 import numpy as np
 
+_HOP_LENGTH = 256
+_SNAP_WINDOW_SECONDS = 0.070
+
 
 @dataclass(frozen=True, slots=True)
 class BeatAnalysis:
@@ -64,8 +67,69 @@ def _load_audio(source: Path) -> tuple[np.ndarray, int]:
         return librosa.load(decoded, sr=None, mono=True)
 
 
+def _percussive_signal(audio: np.ndarray) -> np.ndarray:
+    """Prefer drum/transient energy while safely falling back to the full mix."""
+    try:
+        percussive = np.asarray(
+            librosa.effects.percussive(
+                audio,
+                margin=3.0,
+                hop_length=_HOP_LENGTH,
+            ),
+            dtype=np.float32,
+        )
+    except Exception:
+        return audio
+
+    if percussive.shape != audio.shape or not np.any(np.abs(percussive) > 1e-8):
+        return audio
+    return percussive
+
+
+def _snap_beat_frames_to_onsets(
+    beat_frames: np.ndarray,
+    onset_frames: np.ndarray,
+    onset_envelope: np.ndarray,
+    sample_rate: int,
+) -> np.ndarray:
+    """Align tempo-grid beats to nearby physical transients without changing the rhythm grid."""
+    beats = np.asarray(beat_frames, dtype=int).reshape(-1)
+    onsets = np.asarray(onset_frames, dtype=int).reshape(-1)
+    envelope = np.asarray(onset_envelope, dtype=float).reshape(-1)
+    if beats.size == 0 or onsets.size == 0 or envelope.size == 0:
+        return beats
+
+    radius = max(1, int(round(_SNAP_WINDOW_SECONDS * sample_rate / _HOP_LENGTH)))
+    refined: list[int] = []
+
+    for beat in beats:
+        nearby = onsets[np.abs(onsets - beat) <= radius]
+        if nearby.size == 0:
+            refined.append(int(beat))
+            continue
+
+        # Prefer the closest onset. If two candidates are equally close, choose
+        # the stronger transient. This avoids snapping a beat to a loud off-beat
+        # event merely because it happens to be inside the search window.
+        distances = np.abs(nearby - beat)
+        best_distance = int(np.min(distances))
+        closest = nearby[distances == best_distance]
+        if closest.size == 1:
+            refined.append(int(closest[0]))
+            continue
+
+        valid = closest[(closest >= 0) & (closest < envelope.size)]
+        if valid.size == 0:
+            refined.append(int(closest[0]))
+            continue
+        strengths = envelope[valid]
+        refined.append(int(valid[int(np.argmax(strengths))]))
+
+    return np.asarray(refined, dtype=int)
+
+
 def analyze_file(path: str | Path) -> BeatAnalysis:
-    """Detect musical beats in an audio file and return timestamps in seconds."""
+    """Detect musical beats and return transient-refined timestamps in seconds."""
 
     source = Path(path)
     if not source.is_file():
@@ -79,20 +143,39 @@ def analyze_file(path: str | Path) -> BeatAnalysis:
     if len(audio) == 0 or not np.any(np.abs(audio) > 1e-8):
         return BeatAnalysis(bpm=0.0, beats=(), duration=duration)
 
-    hop_length = 512
+    rhythmic_audio = _percussive_signal(audio)
     onset_envelope = librosa.onset.onset_strength(
-        y=audio,
+        y=rhythmic_audio,
         sr=sample_rate,
-        hop_length=hop_length,
+        hop_length=_HOP_LENGTH,
         aggregate=np.median,
     )
-    tempo, beat_times = librosa.beat.beat_track(
+    tempo, beat_frames = librosa.beat.beat_track(
         onset_envelope=onset_envelope,
         sr=sample_rate,
-        hop_length=hop_length,
-        units="time",
+        hop_length=_HOP_LENGTH,
+        units="frames",
         trim=False,
         sparse=True,
+    )
+    onset_frames = librosa.onset.onset_detect(
+        onset_envelope=onset_envelope,
+        sr=sample_rate,
+        hop_length=_HOP_LENGTH,
+        units="frames",
+        backtrack=False,
+        sparse=True,
+    )
+    refined_frames = _snap_beat_frames_to_onsets(
+        np.asarray(beat_frames),
+        np.asarray(onset_frames),
+        onset_envelope,
+        sample_rate,
+    )
+    beat_times = librosa.frames_to_time(
+        refined_frames,
+        sr=sample_rate,
+        hop_length=_HOP_LENGTH,
     )
 
     cleaned: list[float] = []
