@@ -1,9 +1,9 @@
 -- OpenBeats for DaVinci Resolve 21.1+ Free and Studio.
 --
--- Resolve Free keeps all Resolve interaction inside this Lua Utility script.
--- Audio analysis is delegated to the local OpenBeats agent through a rendered
--- WAV file and a tiny result.lua handoff, following the same architecture used
--- by OpenRoto for Resolve Free.
+-- IMPORTANT: Resolve 19.1+ restricts UIManager-based scripts to Studio.
+-- This script therefore never creates UI inside Resolve. When more than one
+-- populated audio track exists, a tiny WAV probe asks the external OpenBeats
+-- agent to show the track picker as a normal Windows window.
 
 local function resolveGlobal(name)
     local value = rawget(_G, name)
@@ -17,14 +17,7 @@ local function resolveGlobal(name)
 end
 
 local resolveHost = resolveGlobal("resolve") or resolveGlobal("Resolve")
-local fusionHost = resolveGlobal("fusion") or resolveGlobal("fu") or resolveGlobal("app")
 local bmdHost = resolveGlobal("bmd")
-
-if fusionHost == nil and resolveHost ~= nil then
-    local ok, value = pcall(function() return resolveHost:Fusion() end)
-    if ok then fusionHost = value end
-end
-if fusionHost == nil then fusionHost = resolveGlobal("Fusion") end
 
 local function safePrint(message)
     if type(print) == "function" then
@@ -48,49 +41,11 @@ local function getEnv(name)
         local ok, value = pcall(os.getenv, name)
         if ok and value ~= nil and value ~= "" then return value end
     end
-    if fusionHost ~= nil then
-        local ok, value = pcall(function() return fusionHost:GetEnv(name) end)
-        if ok and value ~= nil and value ~= "" then return value end
-    end
     return nil
 end
 
-local function showDialog(title, message, errorDialog)
-    safePrint(tostring(title) .. ": " .. tostring(message))
-    if fusionHost == nil or bmdHost == nil then return false end
-    local shown = false
-    local ok = pcall(function()
-        local ui = fusionHost.UIManager
-        local disp = bmdHost.UIDispatcher(ui)
-        if ui == nil or disp == nil then return end
-        local win = disp:AddWindow(
-            {
-                ID = "OpenBeatsMessage",
-                WindowTitle = tostring(title),
-                Geometry = { 360, 260, 640, 200 },
-            },
-            ui:VGroup {
-                ui:Label {
-                    ID = "Message",
-                    Text = tostring(message),
-                    WordWrap = true,
-                },
-                ui:Button { ID = "OK", Text = "OK" },
-            }
-        )
-        if win == nil then return end
-        function win.On.OpenBeatsMessage.Close(ev) disp:ExitLoop() end
-        function win.On.OK.Clicked(ev) disp:ExitLoop() end
-        win:Show()
-        shown = true
-        disp:RunLoop()
-        win:Hide()
-    end)
-    return ok and shown
-end
-
 local function fail(message)
-    showDialog("OpenBeats — Error", tostring(message), true)
+    safePrint("ERROR: " .. tostring(message))
     error("OpenBeats: " .. tostring(message))
 end
 
@@ -148,91 +103,19 @@ local function trackItems(timeline, trackIndex)
     return {}
 end
 
-local function trackName(timeline, trackIndex)
-    local ok, value = pcall(function()
-        return timeline:GetTrackName("audio", trackIndex)
-    end)
-    if ok and value ~= nil and tostring(value) ~= "" then return tostring(value) end
-    return "Audio " .. tostring(trackIndex)
-end
-
-local function chooseAudioTrack(timeline)
+local function populatedAudioTracks(timeline)
     local count = tonumber(timeline:GetTrackCount("audio")) or 0
     if count < 1 then error("The current timeline has no audio tracks.") end
 
     local tracks = {}
-    local firstNonEmpty = nil
     for index = 1, count do
         local items = trackItems(timeline, index)
-        local entry = {
-            index = index,
-            name = trackName(timeline, index),
-            itemCount = #items,
-        }
-        table.insert(tracks, entry)
-        if firstNonEmpty == nil and #items > 0 then firstNonEmpty = #tracks end
+        if #items > 0 then
+            table.insert(tracks, { index = index, itemCount = #items })
+        end
     end
-
-    if firstNonEmpty == nil then error("The current timeline has no audio clips to analyze.") end
-
-    if fusionHost == nil or bmdHost == nil then
-        return tracks[firstNonEmpty].index
-    end
-
-    local selected = nil
-    local ui = fusionHost.UIManager
-    local disp = bmdHost.UIDispatcher(ui)
-    if ui == nil or disp == nil then return tracks[firstNonEmpty].index end
-
-    local win = disp:AddWindow(
-        {
-            ID = "OpenBeatsTrackPicker",
-            WindowTitle = "OpenBeats — Generate Beat Markers",
-            Geometry = { 360, 220, 620, 220 },
-        },
-        ui:VGroup {
-            ui:Label {
-                Text = "Choose the soundtrack/audio track to analyze:",
-                WordWrap = true,
-            },
-            ui:ComboBox { ID = "Track" },
-            ui:HGroup {
-                ui:Button { ID = "Cancel", Text = "Cancel" },
-                ui:Button { ID = "Generate", Text = "Generate Beat Markers" },
-            },
-        }
-    )
-    if win == nil then return tracks[firstNonEmpty].index end
-
-    local items = win:GetItems()
-    for _, entry in ipairs(tracks) do
-        local suffix = entry.itemCount == 1 and " clip" or " clips"
-        items.Track:AddItem(
-            "A" .. tostring(entry.index) .. " — " .. entry.name ..
-            " (" .. tostring(entry.itemCount) .. suffix .. ")"
-        )
-    end
-    items.Track.CurrentIndex = firstNonEmpty - 1
-
-    function win.On.OpenBeatsTrackPicker.Close(ev)
-        selected = nil
-        disp:ExitLoop()
-    end
-    function win.On.Cancel.Clicked(ev)
-        selected = nil
-        disp:ExitLoop()
-    end
-    function win.On.Generate.Clicked(ev)
-        local uiIndex = tonumber(items.Track.CurrentIndex) or 0
-        local entry = tracks[uiIndex + 1]
-        if entry ~= nil and entry.itemCount > 0 then selected = entry.index end
-        disp:ExitLoop()
-    end
-
-    win:Show()
-    disp:RunLoop()
-    win:Hide()
-    return selected
+    if #tracks < 1 then error("The current timeline has no audio clips to analyze.") end
+    return tracks
 end
 
 local function analysisRange(timeline, trackIndex)
@@ -367,17 +250,56 @@ local function renderTrack(project, timeline, trackIndex, startFrame, endFrame, 
     if not ok then error(renderError) end
 end
 
-local function waitForResult(resultPath)
+local function waitForResponse(path, description)
     local iterations = 0
     while true do
-        local ok, value = pcall(dofile, resultPath)
+        local ok, value = pcall(dofile, path)
         if ok and type(value) == "table" and value.status ~= nil then return value end
         iterations = iterations + 1
         if iterations > 36000 then
-            error("Timed out waiting for the OpenBeats analysis agent.")
+            error("Timed out waiting for the OpenBeats " .. tostring(description) .. ".")
         end
         waitBriefly()
     end
+end
+
+local function trackIsAllowed(tracks, trackIndex)
+    for _, entry in ipairs(tracks) do
+        if entry.index == trackIndex then return true end
+    end
+    return false
+end
+
+local function chooseAudioTrack(project, timeline, tracks, exchangeDir, sessionDir, sessionId)
+    if #tracks == 1 then return tracks[1].index end
+
+    local indices = {}
+    for _, entry in ipairs(tracks) do table.insert(indices, tostring(entry.index)) end
+    local probeName = "OpenBeatsSelect_" .. sessionId .. "__" .. table.concat(indices, "-")
+    local probeStart, _ = analysisRange(timeline, tracks[1].index)
+
+    safePrint("Multiple audio tracks found; opening external track picker.")
+    renderTrack(
+        project,
+        timeline,
+        tracks[1].index,
+        probeStart,
+        probeStart + 1,
+        exchangeDir,
+        probeName
+    )
+
+    local selection = waitForResponse(sessionDir .. [[\selection.lua]], "track selection")
+    if tostring(selection.status) == "cancelled" then return nil end
+    if tostring(selection.status) ~= "ok" then
+        error("Track selection failed: " .. tostring(selection.message or "unknown error"))
+    end
+
+    local trackIndex = math.floor(asNumber(selection.track, 0))
+    if not trackIsAllowed(tracks, trackIndex) then
+        error("The OpenBeats agent returned an invalid audio track selection.")
+    end
+    return trackIndex
 end
 
 local function markerCustomData(timeline, frameId, marker)
@@ -439,11 +361,8 @@ local function placeMarkers(timeline, analysis, startFrame, endFrame, fps)
                             "openbeats.beat.v1"
                         )
                     end)
-                    if ok and added ~= false then
-                        inserted = inserted + 1
-                    else
-                        skipped = skipped + 1
-                    end
+                    if ok and added ~= false then inserted = inserted + 1
+                    else skipped = skipped + 1 end
                 end
             end
         end
@@ -462,13 +381,6 @@ local function run()
     local timeline = project:GetCurrentTimeline()
     if timeline == nil then error("Open a timeline before starting OpenBeats.") end
 
-    local trackIndex = chooseAudioTrack(timeline)
-    if trackIndex == nil then
-        safePrint("Cancelled by user.")
-        return
-    end
-
-    local startFrame, endFrame = analysisRange(timeline, trackIndex)
     local fps = asNumber(
         getSetting(
             project,
@@ -482,10 +394,25 @@ local function run()
 
     local localData = getEnv("LOCALAPPDATA")
     if localData == nil then error("LOCALAPPDATA is unavailable in Resolve.") end
+
+    local heartbeatOk, heartbeat = pcall(dofile, localData .. [[\OpenBeats\agent.lua]])
+    if not heartbeatOk or type(heartbeat) ~= "table" then
+        error("The OpenBeats agent is not running. Start the agent and run OpenBeats again.")
+    end
+
     local sessionId = sessionNonce()
-    local customName = "OpenBeats_" .. sessionId
     local exchangeDir = localData .. [[\OpenBeats\Exchange]]
-    local resultPath = localData .. [[\OpenBeats\Sessions\]] .. sessionId .. [[\result.lua]]
+    local sessionDir = localData .. [[\OpenBeats\Sessions\]] .. sessionId
+    local tracks = populatedAudioTracks(timeline)
+    local trackIndex = chooseAudioTrack(project, timeline, tracks, exchangeDir, sessionDir, sessionId)
+    if trackIndex == nil then
+        safePrint("Cancelled by user.")
+        return
+    end
+
+    local startFrame, endFrame = analysisRange(timeline, trackIndex)
+    local customName = "OpenBeats_" .. sessionId
+    local resultPath = sessionDir .. [[\result.lua]]
 
     safePrint(
         "Analyzing A" .. tostring(trackIndex) .. " frames " ..
@@ -493,7 +420,7 @@ local function run()
     )
     renderTrack(project, timeline, trackIndex, startFrame, endFrame, exchangeDir, customName)
 
-    local response = waitForResult(resultPath)
+    local response = waitForResponse(resultPath, "beat analysis")
     if tostring(response.status) ~= "ok" then
         error("Beat analysis failed: " .. tostring(response.message or "unknown analysis error"))
     end
@@ -503,11 +430,9 @@ local function run()
     local bpm = asNumber(response.bpm, 0)
     if bpm > 0 then message = message .. string.format(" at approximately %.2f BPM", bpm) end
     if skipped > 0 then
-        message = message .. ". " .. tostring(skipped) .. " marker positions were already occupied."
-    else
-        message = message .. "."
+        message = message .. "; skipped " .. tostring(skipped) .. " occupied positions"
     end
-    showDialog("OpenBeats", message, false)
+    safePrint(message .. ".")
 end
 
 local ok, runError = pcall(run)
