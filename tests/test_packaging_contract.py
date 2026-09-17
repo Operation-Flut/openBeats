@@ -10,14 +10,29 @@ def test_windows_bundle_has_packaged_agent_entrypoint() -> None:
     build = (ROOT / "scripts" / "build.ps1").read_text(encoding="utf-8")
 
     assert '"--self-test"' in launcher
+    assert '"--settings-ui"' in launcher
     assert "Local\\\\OpenBeatsAgent" in launcher
     assert "imageio_ffmpeg.get_ffmpeg_exe" in launcher
+    assert "import kivy" in launcher
     assert "PyInstaller" in build
     assert "--windowed" in build
     assert "--onedir" in build
     assert "--collect-all imageio_ffmpeg" in build
+    assert "--collect-all kivy" in build
     assert "--collect-all librosa" in build
     assert '"--self-test"' in build
+
+
+def test_kivy_settings_window_exposes_detection_controls() -> None:
+    ui = (ROOT / "app" / "openbeats" / "settings_ui.py").read_text(encoding="utf-8")
+
+    assert "Music Tempo" in ui
+    assert "Drum Beat" in ui
+    assert "Onset" in ui
+    assert "Sensitivity" in ui
+    assert "Marker interval" in ui
+    assert "Accuracy" in ui
+    assert "Generate Beat Markers" in ui
 
 
 def test_inno_installer_deploys_resolve_script_and_agent() -> None:
