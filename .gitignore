@@ -1,7 +1,11 @@
 __pycache__/
 *.py[cod]
+*.egg-info/
 .pytest_cache/
 .ruff_cache/
+.coverage
+coverage.xml
+htmlcov/
 .venv/
 .venv-dev/
 .venv-build/
@@ -9,4 +13,6 @@ venv/
 dist/
 build/
 installer/output/
-*.egg-info/
+*.log
+.DS_Store
+Thumbs.db
