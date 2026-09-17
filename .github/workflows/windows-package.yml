@@ -1,0 +1,43 @@
+name: Windows Dev Installer
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - "app/**"
+      - "resolve/**"
+      - "installer/**"
+      - "scripts/build.ps1"
+      - "scripts/build-installer.ps1"
+      - "pyproject.toml"
+      - ".github/workflows/windows-package.yml"
+
+jobs:
+  package:
+    runs-on: windows-latest
+    timeout-minutes: 45
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install Inno Setup
+        shell: pwsh
+        run: choco install innosetup --yes --no-progress
+
+      - name: Build Windows installer
+        shell: pwsh
+        run: .\scripts\build-installer.ps1 -Python python
+
+      - name: Upload dev installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: OpenBeats-Windows-Dev-Installer
+          path: installer/output/OpenBeatsSetup-*-dev-x64.exe
+          if-no-files-found: error
+          retention-days: 14
