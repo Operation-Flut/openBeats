@@ -71,11 +71,14 @@ Write-Host "Building OpenBeats.exe..."
     --name OpenBeats `
     --paths (Join-Path $projectRoot "app") `
     --collect-all imageio_ffmpeg `
-    --collect-all kivy `
     --collect-all librosa `
     --collect-all soundfile `
     --collect-all soxr `
     --collect-all numba `
+    --hidden-import openbeats.settings_ui `
+    --hidden-import kivy_deps.angle `
+    --hidden-import kivy_deps.glew `
+    --hidden-import kivy_deps.sdl2 `
     --hidden-import llvmlite.binding `
     --copy-metadata imageio-ffmpeg `
     --copy-metadata librosa `
