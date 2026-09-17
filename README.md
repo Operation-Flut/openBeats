@@ -19,7 +19,7 @@ Implemented:
 - native Resolve audio-track picker
 - isolated temporary-timeline WAV render
 - Resolve Free-safe Lua handoff through `dofile()`
-- librosa 1.0 beat tracking
+- librosa beat tracking (`0.11` on Python 3.11, `1.0` on Python 3.12+)
 - BPM + beat timestamp result protocol
 - timeline marker placement with `openbeats.beat.v1` custom data
 - replacement of previous OpenBeats markers inside the analyzed range
@@ -42,25 +42,24 @@ Still to validate before a first release:
 
 ## Development setup on Windows
 
-Python 3.12+ is required for the local agent.
+Python 3.11 or newer is supported for the local development agent.
 
 ```powershell
 git clone https://github.com/ninocss/openbeats.git
 cd openbeats
-python -m venv .venv
-.venv\Scripts\Activate.ps1
-pip install -e .[dev]
 .\scripts\install-dev.ps1 -StartAgent
 ```
+
+The installer creates a repository-local `.venv-dev`, updates pip there, installs OpenBeats, installs `OpenBeats.lua` into Resolve, and optionally starts the agent. If installation fails, it stops before modifying the Resolve script installation.
 
 Restart DaVinci Resolve, then open:
 
 `Workspace -> Scripts -> OpenBeats`
 
-If the background agent is not running, start it manually:
+If the background agent is not running, start it manually with the command printed by `install-dev.ps1`, normally:
 
 ```powershell
-openbeats-agent
+.\.venv-dev\Scripts\python.exe -m openbeats.agent
 ```
 
 ## Windows dev installer
