@@ -16,7 +16,6 @@ def _local_root() -> Path:
 
 
 def _ensure_standard_streams() -> None:
-    """Give a windowed PyInstaller process writable stdout/stderr for diagnostics."""
     global _LOG_HANDLE
     if sys.stdout is not None and sys.stderr is not None:
         return
@@ -31,7 +30,6 @@ def _ensure_standard_streams() -> None:
 
 
 def _acquire_windows_mutex() -> bool:
-    """Allow only one packaged OpenBeats agent per Windows user session."""
     global _MUTEX_HANDLE
     if os.name != "nt":
         return True
@@ -58,11 +56,13 @@ def _release_windows_mutex() -> None:
 
 def _self_test() -> int:
     import imageio_ffmpeg
+    import kivy  # noqa: F401
     import librosa  # noqa: F401
     import numpy  # noqa: F401
     import soundfile  # noqa: F401
     from openbeats.analyzer import analyze_file  # noqa: F401
     from openbeats.protocol import result_lua  # noqa: F401
+    from openbeats.settings import BeatSettings  # noqa: F401
 
     ffmpeg = Path(imageio_ffmpeg.get_ffmpeg_exe())
     if not ffmpeg.is_file():
@@ -72,8 +72,15 @@ def _self_test() -> int:
 
 def main() -> int:
     _ensure_standard_streams()
-    if "--self-test" in sys.argv[1:]:
+    arguments = sys.argv[1:]
+    if "--self-test" in arguments:
         return _self_test()
+
+    if "--settings-ui" in arguments:
+        from openbeats.settings_ui import main as settings_main
+
+        ui_args = [value for value in arguments if value != "--settings-ui"]
+        return int(settings_main(ui_args))
 
     if not _acquire_windows_mutex():
         return 0
@@ -81,7 +88,7 @@ def main() -> int:
     try:
         from openbeats.agent import main as agent_main
 
-        argv = [value for value in sys.argv[1:] if value != "--agent"]
+        argv = [value for value in arguments if value != "--agent"]
         return int(agent_main(argv))
     finally:
         _release_windows_mutex()
