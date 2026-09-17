@@ -94,6 +94,14 @@ def _show_windows_error(message: str) -> None:
         )
 
 
+def _append_analysis_log(message: str) -> None:
+    log_path = local_root() / "analysis.log"
+    with contextlib.suppress(OSError):
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        with log_path.open("a", encoding="utf-8", buffering=1) as log:
+            log.write(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] {message}\n")
+
+
 def _run_ui(command: list[str]) -> subprocess.CompletedProcess[str]:
     """Run the external settings UI and preserve diagnostics for hidden agents."""
     log_path = local_root() / "settings-ui.log"
@@ -237,11 +245,33 @@ class BeatAgent:
                 response = error_lua("Beat generation was cancelled in the settings window.")
             else:
                 settings = load_session_settings(session_id)
+                _append_analysis_log(
+                    f"session={session_id} file={audio_path.name} settings={settings!r}"
+                )
                 analysis = analyze_file(audio_path, settings)
-                response = result_lua(analysis)
+                _append_analysis_log(
+                    f"session={session_id} bpm={analysis.bpm:.3f} "
+                    f"beats={len(analysis.beats)} duration={analysis.duration:.3f}s"
+                )
+                if not analysis.beats:
+                    message = (
+                        "OpenBeats could not detect any beats with the selected settings. "
+                        "Try Music Tempo, a higher Sensitivity, or Balanced accuracy.\n\n"
+                        f"Log: {local_root() / 'analysis.log'}"
+                    )
+                    response = error_lua(message)
+                    _show_windows_error(message)
+                else:
+                    response = result_lua(analysis)
         except Exception as exc:
             detail = f"{type(exc).__name__}: {exc}"
-            response = error_lua(detail)
+            _append_analysis_log(f"session={session_id} ERROR {detail}")
+            message = (
+                f"OpenBeats beat analysis failed: {detail}\n\n"
+                f"Log: {local_root() / 'analysis.log'}"
+            )
+            response = error_lua(message)
+            _show_windows_error(message)
             traceback.print_exc()
 
         try:
