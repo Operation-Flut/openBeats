@@ -4,6 +4,7 @@ import argparse
 import os
 from collections.abc import Iterable
 
+os.environ.setdefault("KIVY_NO_ARGS", "1")
 os.environ.setdefault("KIVY_NO_CONSOLELOG", "1")
 os.environ.setdefault("KIVY_LOG_LEVEL", "warning")
 
