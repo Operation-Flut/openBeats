@@ -59,11 +59,14 @@ def test_dev_install_checks_kivy_and_uses_console_python_for_agent() -> None:
     assert "MessageBoxW" in agent
 
 
-def test_inno_installer_deploys_resolve_script_and_agent() -> None:
+def test_inno_installer_is_release_ready() -> None:
     installer = (ROOT / "installer" / "OpenBeats.iss").read_text(encoding="utf-8")
 
     assert "PrivilegesRequired=lowest" in installer
-    assert "OpenBeatsSetup-{#MyAppVersion}-dev-x64" in installer
+    assert "OpenBeatsSetup-{#MyAppVersion}-x64" in installer
+    assert "-dev-x64" not in installer
+    assert "AppPublisherURL={#MyAppURL}" in installer
+    assert "AppSupportURL={#MyAppURL}/issues" in installer
     assert installer.count('Source: "..\\resolve\\OpenBeats.lua"') == 2
     assert "DaVinci Resolve\\Support\\Fusion\\Scripts\\Utility" in installer
     assert "DaVinci Resolve\\Fusion\\Scripts\\Utility" in installer
@@ -72,9 +75,27 @@ def test_inno_installer_deploys_resolve_script_and_agent() -> None:
     assert "uninsdeletevalue" in installer
 
 
-def test_one_command_installer_builder_exists() -> None:
+def test_one_command_installer_builder_is_version_aware() -> None:
     builder = (ROOT / "scripts" / "build-installer.ps1").read_text(encoding="utf-8")
 
     assert "build.ps1" in builder
     assert "ISCC.exe" in builder
     assert "OpenBeats.iss" in builder
+    assert '"/DMyAppVersion=$Version"' in builder
+    assert '"OpenBeatsSetup-$Version-x64.exe"' in builder
+
+
+def test_tag_release_workflow_builds_and_publishes_installer() -> None:
+    workflow = (ROOT / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")
+
+    assert 'tags:' in workflow
+    assert '"v*.*.*"' in workflow
+    assert "contents: write" in workflow
+    assert "Validate release version" in workflow
+    assert "pyproject.toml" in workflow
+    assert "build-installer.ps1" in workflow
+    assert "Get-FileHash" in workflow
+    assert "SHA256" in workflow
+    assert "gh release create" in workflow
+    assert "--generate-notes" in workflow
+    assert "OpenBeatsSetup-${{ env.OPENBEATS_VERSION }}-x64.exe" in workflow
