@@ -29,13 +29,21 @@ def test_kivy_settings_window_exposes_detection_controls() -> None:
     ui = (ROOT / "app" / "openbeats" / "settings_ui.py").read_text(encoding="utf-8")
 
     assert 'os.environ.setdefault("KIVY_NO_ARGS", "1")' in ui
-    assert ui.index('KIVY_NO_ARGS') < ui.index('from kivy.app import App')
+    assert ui.index("KIVY_NO_ARGS") < ui.index("from kivy.app import App")
     assert "Music Tempo" in ui
     assert "Drum Beat" in ui
     assert "Onset" in ui
     assert "Sensitivity" in ui
     assert "Marker interval" in ui
     assert "Accuracy" in ui
+    assert "Quick presets" in ui
+    assert "Balanced" in ui
+    assert "Clean" in ui
+    assert "Drums" in ui
+    assert "Dense" in ui
+    assert "Bars" in ui
+    assert "Minimum marker gap" in ui
+    assert "Marker appearance" in ui
     assert "Generate Beat Markers" in ui
 
 
