@@ -18,7 +18,9 @@ def test_windows_bundle_has_packaged_agent_entrypoint() -> None:
     assert "--windowed" in build
     assert "--onedir" in build
     assert "--collect-all imageio_ffmpeg" in build
-    assert "--collect-all kivy" in build
+    assert "--collect-all kivy" not in build
+    assert "--hidden-import openbeats.settings_ui" in build
+    assert "--hidden-import kivy_deps.sdl2" in build
     assert "--collect-all librosa" in build
     assert '"--self-test"' in build
 
@@ -33,6 +35,18 @@ def test_kivy_settings_window_exposes_detection_controls() -> None:
     assert "Marker interval" in ui
     assert "Accuracy" in ui
     assert "Generate Beat Markers" in ui
+
+
+def test_dev_install_checks_kivy_and_uses_console_python_for_agent() -> None:
+    installer = (ROOT / "scripts" / "install-dev.ps1").read_text(encoding="utf-8")
+    agent = (ROOT / "app" / "openbeats" / "agent.py").read_text(encoding="utf-8")
+
+    assert "Kivy settings UI import OK" in installer
+    assert "-WindowStyle Hidden" in installer
+    assert "pythonw.exe" not in installer.split("if ($StartAgent)", 1)[1]
+    assert "settings-ui.log" in agent
+    assert "CREATE_NO_WINDOW" in agent
+    assert "MessageBoxW" in agent
 
 
 def test_inno_installer_deploys_resolve_script_and_agent() -> None:
