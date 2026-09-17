@@ -71,6 +71,7 @@ Write-Host "Building OpenBeats.exe..."
     --name OpenBeats `
     --paths (Join-Path $projectRoot "app") `
     --collect-all imageio_ffmpeg `
+    --collect-all kivy `
     --collect-all librosa `
     --collect-all soundfile `
     --collect-all soxr `
