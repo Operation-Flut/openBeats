@@ -6,7 +6,9 @@ from openbeats.analyzer import BeatAnalysis
 from openbeats.protocol import (
     error_lua,
     result_lua,
+    selection_lua,
     session_id_from_audio,
+    track_selection_request_from_audio,
     update_stability,
 )
 
@@ -14,6 +16,20 @@ from openbeats.protocol import (
 def test_session_id_from_audio() -> None:
     assert session_id_from_audio("OpenBeats_1234-abcd.wav") == "1234-abcd"
     assert session_id_from_audio("other.wav") is None
+
+
+def test_track_selection_request_from_audio() -> None:
+    request = track_selection_request_from_audio("OpenBeatsSelect_1234-abcd__1-3-5.wav")
+    assert request is not None
+    assert request.session_id == "1234-abcd"
+    assert request.track_indices == (1, 3, 5)
+    assert track_selection_request_from_audio("OpenBeats_1234-abcd.wav") is None
+
+
+def test_selection_lua_serializes_choice_and_cancel() -> None:
+    assert 'status = "ok"' in selection_lua(3)
+    assert "track = 3" in selection_lua(3)
+    assert 'status = "cancelled"' in selection_lua(None)
 
 
 def test_result_lua_serializes_analysis() -> None:
