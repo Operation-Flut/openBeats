@@ -8,6 +8,7 @@ $Root = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 $LuaSource = Join-Path $Root "resolve\OpenBeats.lua"
 $VenvPath = Join-Path $Root ".venv-dev"
 $VenvPython = Join-Path $VenvPath "Scripts\python.exe"
+$VenvPythonW = Join-Path $VenvPath "Scripts\pythonw.exe"
 
 function Invoke-Native([string]$FilePath, [string[]]$Arguments) {
     & $FilePath @Arguments
@@ -58,7 +59,11 @@ New-Item -ItemType Directory -Path (Join-Path $localRoot "Sessions") -Force | Ou
 
 if ($StartAgent) {
     Write-Host "Starting OpenBeats agent..."
-    Start-Process -FilePath $VenvPython -ArgumentList "-m", "openbeats.agent" -WindowStyle Hidden
+    if (Test-Path $VenvPythonW) {
+        Start-Process -FilePath $VenvPythonW -ArgumentList "-m", "openbeats.agent"
+    } else {
+        Start-Process -FilePath $VenvPython -ArgumentList "-m", "openbeats.agent" -WindowStyle Hidden
+    }
 }
 
 Write-Host "OpenBeats development install complete. Restart DaVinci Resolve before testing."
