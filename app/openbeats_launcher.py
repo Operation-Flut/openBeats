@@ -60,7 +60,6 @@ def _self_test() -> int:
     import librosa  # noqa: F401
     import numpy  # noqa: F401
     import soundfile  # noqa: F401
-
     from openbeats.analyzer import analyze_file  # noqa: F401
     from openbeats.protocol import result_lua  # noqa: F401
 
