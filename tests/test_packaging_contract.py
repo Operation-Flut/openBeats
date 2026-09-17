@@ -11,9 +11,11 @@ def test_windows_bundle_has_packaged_agent_entrypoint() -> None:
 
     assert '"--self-test"' in launcher
     assert "Local\\\\OpenBeatsAgent" in launcher
+    assert "imageio_ffmpeg.get_ffmpeg_exe" in launcher
     assert "PyInstaller" in build
     assert "--windowed" in build
     assert "--onedir" in build
+    assert "--collect-all imageio_ffmpeg" in build
     assert "--collect-all librosa" in build
     assert '"--self-test"' in build
 
