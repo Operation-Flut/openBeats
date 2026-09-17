@@ -1,9 +1,10 @@
 -- OpenBeats for DaVinci Resolve 21.1+ Free and Studio.
 --
--- IMPORTANT: Resolve 19.1+ restricts UIManager-based scripts to Studio.
--- This script therefore never creates UI inside Resolve. When more than one
--- populated audio track exists, a tiny WAV probe asks the external OpenBeats
--- agent to show the track picker as a normal Windows window.
+-- Resolve Free keeps all Resolve interaction inside Lua. UIManager is not used.
+-- Track selection is requested through a tiny DRT trigger and shown by the
+-- external OpenBeats agent. Beat analysis uses a scriptable MP4/AAC render,
+-- because current Resolve builds can expose Wave/wav without an API-selectable
+-- codec, making direct WAV rendering unreachable from SetCurrentRenderFormatAndCodec.
 
 local function resolveGlobal(name)
     local value = rawget(_G, name)
@@ -17,7 +18,31 @@ local function resolveGlobal(name)
 end
 
 local resolveHost = resolveGlobal("resolve") or resolveGlobal("Resolve")
+local fusionHost = resolveGlobal("fusion") or resolveGlobal("fu") or resolveGlobal("app")
 local bmdHost = resolveGlobal("bmd")
+
+if fusionHost == nil and resolveHost ~= nil then
+    local ok, value = pcall(function() return resolveHost:Fusion() end)
+    if ok then fusionHost = value end
+end
+if fusionHost == nil then fusionHost = resolveGlobal("Fusion") end
+
+local stageKey = "OpenBeats.LauncherStage"
+local errorKey = "OpenBeats.LauncherError"
+
+local function setData(key, value)
+    if fusionHost == nil then return false end
+    local ok = pcall(function() fusionHost:SetData(key, value) end)
+    return ok
+end
+
+local function setStage(stage)
+    local value = tostring(stage)
+    setData(stageKey, value)
+    if type(print) == "function" then
+        pcall(print, "[OpenBeats] " .. value)
+    end
+end
 
 local function safePrint(message)
     if type(print) == "function" then
@@ -41,12 +66,18 @@ local function getEnv(name)
         local ok, value = pcall(os.getenv, name)
         if ok and value ~= nil and value ~= "" then return value end
     end
+    if fusionHost ~= nil then
+        local ok, value = pcall(function() return fusionHost:GetEnv(name) end)
+        if ok and value ~= nil and value ~= "" then return value end
+    end
     return nil
 end
 
 local function fail(message)
-    safePrint("ERROR: " .. tostring(message))
-    error("OpenBeats: " .. tostring(message))
+    local text = tostring(message)
+    setData(errorKey, text)
+    setStage("failed: " .. text)
+    error("OpenBeats: " .. text)
 end
 
 local function asNumber(value, fallback)
@@ -140,34 +171,51 @@ local function analysisRange(timeline, trackIndex)
     return first, last
 end
 
-local function pickWavCodec(project)
-    local formats = project:GetRenderFormats() or {}
-    for formatName, extension in pairs(formats) do
-        if lowerExtension(extension) == "wav" then
-            local codecs = project:GetRenderCodecs(extension) or project:GetRenderCodecs(formatName) or {}
-            local fallback = nil
-            for codecName, codecId in pairs(codecs) do
-                if fallback == nil then fallback = codecId end
-                local lowered = string.lower(tostring(codecName))
-                if string.find(lowered, "pcm", 1, true) or
-                   string.find(lowered, "linear", 1, true) then
-                    return tostring(extension), codecId
-                end
+local function preferredCodec(codecs)
+    local fallback = nil
+    for codecName, codecId in pairs(codecs or {}) do
+        local id = tostring(codecId or "")
+        if id ~= "" then
+            if fallback == nil then fallback = id end
+            local lowered = string.lower(tostring(codecName) .. " " .. id)
+            if string.find(lowered, "h264", 1, true) or
+               string.find(lowered, "h.264", 1, true) then
+                return id
             end
-            if fallback ~= nil then return tostring(extension), fallback end
         end
     end
-    error("Resolve does not expose a WAV audio renderer on this installation.")
+    return fallback
 end
 
-local function renderTrack(project, timeline, trackIndex, startFrame, endFrame, targetDir, customName)
+local function pickScriptableContainer(project)
+    local formats = project:GetRenderFormats() or {}
+    for _, wanted in ipairs({ "mp4", "mov" }) do
+        for _, formatId in pairs(formats) do
+            local normalized = lowerExtension(formatId)
+            if normalized == wanted then
+                local codecs = project:GetRenderCodecs(tostring(formatId)) or {}
+                local codecId = preferredCodec(codecs)
+                if codecId ~= nil then
+                    return tostring(formatId), tostring(codecId), normalized
+                end
+            end
+        end
+    end
+    error("Resolve exposes no scriptable MP4/QuickTime renderer for OpenBeats.")
+end
+
+local function renderTrack(project, timeline, trackIndex, startFrame, endFrame, targetDir, customName, fps)
     local presetName = "__OpenBeats_" .. sessionNonce()
     local temporaryTimeline = nil
     local jobId = nil
     local savedPreset = false
     local originalTimeline = timeline
+    local originalPage = nil
+
+    pcall(function() originalPage = resolveHost:GetCurrentPage() end)
 
     local function cleanup()
+        setStage("render-cleanup")
         if jobId ~= nil then pcall(function() project:DeleteRenderJob(jobId) end) end
         pcall(function() project:SetCurrentTimeline(originalTimeline) end)
         if temporaryTimeline ~= nil then
@@ -179,14 +227,19 @@ local function renderTrack(project, timeline, trackIndex, startFrame, endFrame, 
                 project:DeleteRenderPreset(presetName)
             end)
         end
+        if originalPage ~= nil and tostring(originalPage) ~= "" then
+            pcall(function() resolveHost:OpenPage(tostring(originalPage)) end)
+        end
     end
 
     local ok, renderError = pcall(function()
+        setStage("render-snapshot")
         savedPreset = project:SaveAsNewRenderPreset(presetName) == true
         if not savedPreset then
             error("Resolve could not snapshot the current render settings.")
         end
 
+        setStage("render-isolate-track")
         temporaryTimeline = timeline:DuplicateTimeline("__OpenBeats Audio Export")
         if temporaryTimeline == nil then error("Resolve could not duplicate the timeline.") end
         if project:SetCurrentTimeline(temporaryTimeline) == false then
@@ -202,11 +255,19 @@ local function renderTrack(project, timeline, trackIndex, startFrame, endFrame, 
             temporaryTimeline:SetTrackEnable("audio", index, index == trackIndex)
         end
 
-        local formatId, codecId = pickWavCodec(project)
+        setStage("render-format")
+        local formatId, codecId = pickScriptableContainer(project)
         if project:SetCurrentRenderFormatAndCodec(formatId, codecId) == false then
-            error("Resolve rejected the WAV format selected by OpenBeats.")
+            error(
+                "Resolve rejected the scriptable render format " ..
+                tostring(formatId) .. "/" .. tostring(codecId) .. "."
+            )
         end
-        project:SetCurrentRenderMode(1)
+        if project:SetCurrentRenderMode(1) == false then
+            error("Resolve rejected Single Clip render mode.")
+        end
+
+        setStage("render-settings")
         if project:SetRenderSettings({
             SelectAllFrames = false,
             MarkIn = startFrame,
@@ -214,18 +275,26 @@ local function renderTrack(project, timeline, trackIndex, startFrame, endFrame, 
             TargetDir = targetDir,
             CustomName = customName,
             UseUniqueFilenames = false,
-            ExportVideo = false,
+            ExportVideo = true,
             ExportAudio = true,
+            FormatWidth = 256,
+            FormatHeight = 144,
+            FrameRate = fps,
+            AudioCodec = "aac",
+            AudioSampleRate = 48000,
         }) == false then
-            error("Resolve rejected the OpenBeats audio render settings.")
+            error("Resolve rejected the OpenBeats analysis render settings.")
         end
 
+        setStage("render-job")
         jobId = project:AddRenderJob()
         if jobId == nil or jobId == "" then
-            error("Resolve could not create the OpenBeats audio render job.")
+            error("Resolve could not create the OpenBeats analysis render job.")
         end
+
+        setStage("rendering")
         if project:StartRendering({ jobId }, false) == false then
-            error("Resolve could not start the OpenBeats audio render.")
+            error("Resolve could not start the OpenBeats analysis render.")
         end
 
         local iterations = 0
@@ -233,16 +302,17 @@ local function renderTrack(project, timeline, trackIndex, startFrame, endFrame, 
             iterations = iterations + 1
             if iterations > 108000 then
                 pcall(function() project:StopRendering() end)
-                error("OpenBeats audio export timed out.")
+                error("OpenBeats analysis render timed out.")
             end
             waitBriefly()
         end
 
+        setStage("render-status")
         local status = project:GetRenderJobStatus(jobId) or {}
         local jobStatus = tostring(status.JobStatus or status["JobStatus"] or "")
         if jobStatus ~= "Complete" then
             local detail = tostring(status.Error or status["Error"] or jobStatus or "unknown render error")
-            error("OpenBeats audio export failed: " .. detail)
+            error("OpenBeats analysis render failed: " .. detail)
         end
     end)
 
@@ -256,7 +326,7 @@ local function waitForResponse(path, description)
         local ok, value = pcall(dofile, path)
         if ok and type(value) == "table" and value.status ~= nil then return value end
         iterations = iterations + 1
-        if iterations > 36000 then
+        if iterations > 6000 then
             error("Timed out waiting for the OpenBeats " .. tostring(description) .. ".")
         end
         waitBriefly()
@@ -270,25 +340,23 @@ local function trackIsAllowed(tracks, trackIndex)
     return false
 end
 
-local function chooseAudioTrack(project, timeline, tracks, exchangeDir, sessionDir, sessionId)
+local function chooseAudioTrack(timeline, tracks, exchangeDir, sessionDir, sessionId)
     if #tracks == 1 then return tracks[1].index end
 
     local indices = {}
     for _, entry in ipairs(tracks) do table.insert(indices, tostring(entry.index)) end
-    local probeName = "OpenBeatsSelect_" .. sessionId .. "__" .. table.concat(indices, "-")
-    local probeStart, _ = analysisRange(timeline, tracks[1].index)
+    local triggerPath = exchangeDir .. "\\OpenBeatsSelect_" .. sessionId ..
+        "__" .. table.concat(indices, "-") .. ".drt"
 
-    safePrint("Multiple audio tracks found; opening external track picker.")
-    renderTrack(
-        project,
-        timeline,
-        tracks[1].index,
-        probeStart,
-        probeStart + 1,
-        exchangeDir,
-        probeName
-    )
+    setStage("track-selection-request")
+    local exportOk, exportResult = pcall(function()
+        return timeline:Export(triggerPath, resolveHost.EXPORT_DRT, resolveHost.EXPORT_NONE)
+    end)
+    if not exportOk or exportResult == false then
+        error("Resolve could not create the OpenBeats track-selection trigger.")
+    end
 
+    setStage("track-selection-wait")
     local selection = waitForResponse(sessionDir .. [[\selection.lua]], "track selection")
     if tostring(selection.status) == "cancelled" then return nil end
     if tostring(selection.status) ~= "ok" then
@@ -370,11 +438,25 @@ local function placeMarkers(timeline, analysis, startFrame, endFrame, fps)
     return inserted, skipped
 end
 
+local function heartbeatIsFresh(heartbeat)
+    if type(heartbeat) ~= "table" then return false end
+    local timestamp = asNumber(heartbeat.timestamp, 0)
+    if timestamp <= 0 then return false end
+    if os == nil or type(os.time) ~= "function" then return true end
+    local ok, now = pcall(os.time)
+    if not ok or now == nil then return true end
+    return math.abs(asNumber(now, 0) - timestamp) <= 15
+end
+
 local function run()
+    setData(errorKey, nil)
+    setStage("start")
+
     local supported, versionOrError = resolveVersionSupported()
     if not supported then error(versionOrError) end
     safePrint("Resolve version " .. tostring(versionOrError))
 
+    setStage("project-context")
     local manager = resolveHost:GetProjectManager()
     local project = manager and manager:GetCurrentProject() or nil
     if project == nil then error("Open a Resolve project before starting OpenBeats.") end
@@ -395,18 +477,19 @@ local function run()
     local localData = getEnv("LOCALAPPDATA")
     if localData == nil then error("LOCALAPPDATA is unavailable in Resolve.") end
 
+    setStage("agent-check")
     local heartbeatOk, heartbeat = pcall(dofile, localData .. [[\OpenBeats\agent.lua]])
-    if not heartbeatOk or type(heartbeat) ~= "table" then
-        error("The OpenBeats agent is not running. Start the agent and run OpenBeats again.")
+    if not heartbeatOk or not heartbeatIsFresh(heartbeat) then
+        error("The OpenBeats agent is not running or its heartbeat is stale. Start the agent and run OpenBeats again.")
     end
 
     local sessionId = sessionNonce()
     local exchangeDir = localData .. [[\OpenBeats\Exchange]]
     local sessionDir = localData .. [[\OpenBeats\Sessions\]] .. sessionId
     local tracks = populatedAudioTracks(timeline)
-    local trackIndex = chooseAudioTrack(project, timeline, tracks, exchangeDir, sessionDir, sessionId)
+    local trackIndex = chooseAudioTrack(timeline, tracks, exchangeDir, sessionDir, sessionId)
     if trackIndex == nil then
-        safePrint("Cancelled by user.")
+        setStage("cancelled")
         return
     end
 
@@ -414,17 +497,20 @@ local function run()
     local customName = "OpenBeats_" .. sessionId
     local resultPath = sessionDir .. [[\result.lua]]
 
+    setStage("analysis-render")
     safePrint(
         "Analyzing A" .. tostring(trackIndex) .. " frames " ..
         tostring(startFrame) .. "-" .. tostring(endFrame)
     )
-    renderTrack(project, timeline, trackIndex, startFrame, endFrame, exchangeDir, customName)
+    renderTrack(project, timeline, trackIndex, startFrame, endFrame, exchangeDir, customName, fps)
 
+    setStage("waiting-analysis")
     local response = waitForResponse(resultPath, "beat analysis")
     if tostring(response.status) ~= "ok" then
         error("Beat analysis failed: " .. tostring(response.message or "unknown analysis error"))
     end
 
+    setStage("placing-markers")
     local inserted, skipped = placeMarkers(timeline, response, startFrame, endFrame, fps)
     local message = "Generated " .. tostring(inserted) .. " beat markers"
     local bpm = asNumber(response.bpm, 0)
@@ -433,6 +519,7 @@ local function run()
         message = message .. "; skipped " .. tostring(skipped) .. " occupied positions"
     end
     safePrint(message .. ".")
+    setStage("completed: " .. tostring(inserted) .. " markers")
 end
 
 local ok, runError = pcall(run)
