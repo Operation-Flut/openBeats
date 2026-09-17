@@ -1,11 +1,26 @@
 [CmdletBinding()]
 param(
-    [string]$Python = "python"
+    [string]$Python = "python",
+    [string]$Version = ""
 )
 
 $ErrorActionPreference = "Stop"
 $projectRoot = Split-Path -Parent $PSScriptRoot
 $installerScript = Join-Path $projectRoot "installer\OpenBeats.iss"
+$pyprojectPath = Join-Path $projectRoot "pyproject.toml"
+
+if ([string]::IsNullOrWhiteSpace($Version)) {
+    $pyproject = Get-Content -LiteralPath $pyprojectPath -Raw
+    $match = [regex]::Match($pyproject, '(?m)^version\s*=\s*"([^"]+)"')
+    if (-not $match.Success) {
+        throw "Could not determine OpenBeats version from pyproject.toml."
+    }
+    $Version = $match.Groups[1].Value
+}
+
+if ($Version -notmatch '^\d+\.\d+\.\d+$') {
+    throw "OpenBeats installer version must use MAJOR.MINOR.PATCH format. Got: $Version"
+}
 
 & (Join-Path $PSScriptRoot "build.ps1") -Python $Python
 if ($LASTEXITCODE -ne 0) {
@@ -27,18 +42,17 @@ if (-not $isccPath) {
     throw "Inno Setup 6 was not found. Install it, then rerun scripts\build-installer.ps1."
 }
 
-Write-Host "Compiling OpenBeats installer with $isccPath..."
-& $isccPath $installerScript
+Write-Host "Compiling OpenBeats $Version installer with $isccPath..."
+& $isccPath "/DMyAppVersion=$Version" $installerScript
 if ($LASTEXITCODE -ne 0) {
     throw "Inno Setup failed with exit code $LASTEXITCODE"
 }
 
 $outputDir = Join-Path $projectRoot "installer\output"
-$installer = Get-ChildItem -LiteralPath $outputDir -Filter "OpenBeatsSetup-*-dev-x64.exe" |
-    Sort-Object LastWriteTime -Descending |
-    Select-Object -First 1
-if (-not $installer) {
-    throw "Inno Setup completed but no OpenBeats installer was found in $outputDir."
+$expectedName = "OpenBeatsSetup-$Version-x64.exe"
+$installer = Join-Path $outputDir $expectedName
+if (-not (Test-Path -LiteralPath $installer)) {
+    throw "Inno Setup completed but $expectedName was not found in $outputDir."
 }
 
-Write-Host "OpenBeats installer created: $($installer.FullName)"
+Write-Host "OpenBeats installer created: $installer"
