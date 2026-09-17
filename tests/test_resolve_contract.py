@@ -16,6 +16,7 @@ def test_lua_launcher_uses_free_compatible_handoff() -> None:
         "SetRenderSettings",
         "AddRenderJob",
         "StartRendering",
+        "OpenBeatsSelect_",
         "pcall(dofile",
         "AddMarker",
         '"openbeats.beat.v1"',
@@ -24,13 +25,16 @@ def test_lua_launcher_uses_free_compatible_handoff() -> None:
         assert token in launcher
 
 
-def test_lua_launcher_avoids_forbidden_external_process_and_file_io() -> None:
+def test_lua_launcher_avoids_studio_only_ui_and_external_process_io() -> None:
     launcher = (ROOT / "resolve" / "OpenBeats.lua").read_text(encoding="utf-8")
     executable = "\n".join(
         line for line in launcher.splitlines() if not line.lstrip().startswith("--")
     )
 
     forbidden = (
+        "UIManager",
+        "UIDispatcher",
+        "AddWindow(",
         "io.open",
         "io.read",
         "io.write",
