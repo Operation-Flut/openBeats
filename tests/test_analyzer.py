@@ -41,6 +41,23 @@ def test_snap_beat_frames_uses_stronger_onset_for_equal_distance() -> None:
     assert refined.tolist() == [102]
 
 
+def test_close_events_keep_stronger_transient() -> None:
+    envelope = np.zeros(200, dtype=float)
+    envelope[100] = 0.4
+    envelope[105] = 0.9
+    envelope[150] = 0.5
+
+    result = analyzer._suppress_close_frames(
+        np.array([100, 105, 150]),
+        envelope,
+        sample_rate=48000,
+        hop_length=256,
+        min_gap_ms=50,
+    )
+
+    assert result.tolist() == [105, 150]
+
+
 def test_accuracy_profiles_use_finer_hops() -> None:
     assert analyzer._accuracy_profile("fast")[0] == 512
     assert analyzer._accuracy_profile("balanced")[0] == 256
@@ -131,7 +148,10 @@ def test_tempo_mode_does_not_require_percussive_separation(
         lambda **_kwargs: np.array([10, 20, 30]),
     )
 
-    result = analyzer.analyze_file(source, BeatSettings(mode="tempo"))
+    result = analyzer.analyze_file(
+        source,
+        BeatSettings(mode="tempo", min_gap_ms=0),
+    )
 
     assert len(result.beats) == 3
 
