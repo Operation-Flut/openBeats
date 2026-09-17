@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 import signal
 import sys
 import time
@@ -12,12 +13,15 @@ from openbeats.protocol import (
     StabilityState,
     error_lua,
     exchange_root,
+    local_root,
     result_lua,
     session_id_from_audio,
     session_root,
     update_stability,
     write_atomic_text,
 )
+
+_HEARTBEAT_INTERVAL = 2.0
 
 
 class BeatAgent:
@@ -26,8 +30,10 @@ class BeatAgent:
         self._stability: dict[Path, StabilityState] = {}
         self._processed: set[Path] = set()
         self._stopping = False
+        self._last_heartbeat = 0.0
 
         exchange_root().mkdir(parents=True, exist_ok=True)
+        self._publish_heartbeat(force=True)
 
     def stop(self, *_args: object) -> None:
         self._stopping = True
@@ -38,6 +44,7 @@ class BeatAgent:
             time.sleep(self.poll_interval)
 
     def poll(self) -> None:
+        self._publish_heartbeat()
         current_files = set(exchange_root().glob("OpenBeats_*.wav"))
         for stale in set(self._stability) - current_files:
             self._stability.pop(stale, None)
@@ -61,6 +68,25 @@ class BeatAgent:
                 continue
 
             self._process(audio_path, session_id)
+
+    def _publish_heartbeat(self, *, force: bool = False) -> None:
+        now = time.monotonic()
+        if not force and now - self._last_heartbeat < _HEARTBEAT_INTERVAL:
+            return
+        content = (
+            "return {\n"
+            '  protocol = "openbeats-v1",\n'
+            f"  pid = {os.getpid()},\n"
+            f"  timestamp = {time.time():.3f},\n"
+            "}\n"
+        )
+        try:
+            write_atomic_text(local_root() / "agent.lua", content)
+            self._last_heartbeat = now
+        except OSError:
+            # The heartbeat only prevents a bad user experience in Resolve. A
+            # transient heartbeat failure must not kill an otherwise working agent.
+            pass
 
     def _process(self, audio_path: Path, session_id: str) -> None:
         destination = session_root(session_id) / "result.lua"
