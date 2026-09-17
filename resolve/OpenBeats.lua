@@ -1,10 +1,10 @@
 -- OpenBeats for DaVinci Resolve 21.1+ Free and Studio.
 --
 -- Resolve Free keeps all Resolve interaction inside Lua. UIManager is not used.
--- Track selection is requested through a tiny DRT trigger and shown by the
--- external OpenBeats agent. Beat analysis uses a scriptable MP4/AAC render,
--- because current Resolve builds can expose Wave/wav without an API-selectable
--- codec, making direct WAV rendering unreachable from SetCurrentRenderFormatAndCodec.
+-- Track selection and beat settings are requested through a tiny DRT trigger and
+-- shown by the external OpenBeats Kivy window. Beat analysis uses a scriptable
+-- MP4/AAC render because current Resolve builds can expose Wave/wav without an
+-- API-selectable codec.
 
 local function resolveGlobal(name)
     local value = rawget(_G, name)
@@ -341,31 +341,29 @@ local function trackIsAllowed(tracks, trackIndex)
 end
 
 local function chooseAudioTrack(timeline, tracks, exchangeDir, sessionDir, sessionId)
-    if #tracks == 1 then return tracks[1].index end
-
     local indices = {}
     for _, entry in ipairs(tracks) do table.insert(indices, tostring(entry.index)) end
     local triggerPath = exchangeDir .. "\\OpenBeatsSelect_" .. sessionId ..
         "__" .. table.concat(indices, "-") .. ".drt"
 
-    setStage("track-selection-request")
+    setStage("settings-request")
     local exportOk, exportResult = pcall(function()
         return timeline:Export(triggerPath, resolveHost.EXPORT_DRT, resolveHost.EXPORT_NONE)
     end)
     if not exportOk or exportResult == false then
-        error("Resolve could not create the OpenBeats track-selection trigger.")
+        error("Resolve could not create the OpenBeats settings trigger.")
     end
 
-    setStage("track-selection-wait")
-    local selection = waitForResponse(sessionDir .. [[\selection.lua]], "track selection")
+    setStage("settings-wait")
+    local selection = waitForResponse(sessionDir .. [[\selection.lua]], "beat settings")
     if tostring(selection.status) == "cancelled" then return nil end
     if tostring(selection.status) ~= "ok" then
-        error("Track selection failed: " .. tostring(selection.message or "unknown error"))
+        error("Beat settings failed: " .. tostring(selection.message or "unknown error"))
     end
 
     local trackIndex = math.floor(asNumber(selection.track, 0))
     if not trackIsAllowed(tracks, trackIndex) then
-        error("The OpenBeats agent returned an invalid audio track selection.")
+        error("The OpenBeats settings window returned an invalid audio track selection.")
     end
     return trackIndex
 end
