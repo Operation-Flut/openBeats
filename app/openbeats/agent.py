@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import contextlib
+import ctypes
 import os
 import signal
 import subprocess
@@ -30,6 +31,16 @@ _HEARTBEAT_INTERVAL = 2.0
 _SUPPORTED_EXCHANGE_SUFFIXES = {".wav", ".mp4", ".mov", ".m4a", ".drt"}
 
 
+def _ui_python_executable() -> str:
+    """Use console Python for child GUI processes even when the agent uses pythonw.exe."""
+    executable = Path(sys.executable)
+    if not getattr(sys, "frozen", False) and executable.name.lower() == "pythonw.exe":
+        python_exe = executable.with_name("python.exe")
+        if python_exe.is_file():
+            return str(python_exe)
+    return sys.executable
+
+
 def _settings_ui_command(request: TrackSelectionRequest) -> list[str]:
     tracks = ",".join(str(value) for value in request.track_indices)
     if getattr(sys, "frozen", False):
@@ -42,7 +53,7 @@ def _settings_ui_command(request: TrackSelectionRequest) -> list[str]:
             tracks,
         ]
     return [
-        sys.executable,
+        _ui_python_executable(),
         "-m",
         "openbeats.settings_ui",
         "--session",
@@ -62,13 +73,46 @@ def _analysis_settings_command(session_id: str) -> list[str]:
             session_id,
         ]
     return [
-        sys.executable,
+        _ui_python_executable(),
         "-m",
         "openbeats.settings_ui",
         "--analysis-only",
         "--session",
         session_id,
     ]
+
+
+def _show_windows_error(message: str) -> None:
+    if os.name != "nt":
+        return
+    with contextlib.suppress(Exception):
+        ctypes.windll.user32.MessageBoxW(
+            None,
+            str(message),
+            "OpenBeats",
+            0x00000010 | 0x00040000,
+        )
+
+
+def _run_ui(command: list[str]) -> subprocess.CompletedProcess[str]:
+    """Run the external settings UI and preserve diagnostics for hidden agents."""
+    log_path = local_root() / "settings-ui.log"
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    creationflags = 0
+    if os.name == "nt":
+        creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+
+    with log_path.open("a", encoding="utf-8", buffering=1) as log:
+        log.write(f"\n[{time.strftime('%Y-%m-%d %H:%M:%S')}] launching: {command!r}\n")
+        return subprocess.run(
+            command,
+            check=False,
+            timeout=3600,
+            stdout=log,
+            stderr=subprocess.STDOUT,
+            text=True,
+            creationflags=creationflags,
+        )
 
 
 class BeatAgent:
@@ -144,27 +188,27 @@ class BeatAgent:
     def _process_selection(self, trigger_path: Path, request: TrackSelectionRequest) -> None:
         destination = session_root(request.session_id) / "selection.lua"
         try:
-            completed = subprocess.run(
-                _settings_ui_command(request),
-                check=False,
-                timeout=3600,
-            )
+            completed = _run_ui(_settings_ui_command(request))
             if completed.returncode != 0 and not destination.is_file():
-                write_atomic_text(
-                    destination,
-                    error_lua(
-                        "OpenBeats settings window exited with code "
-                        f"{completed.returncode}."
-                    ),
+                message = (
+                    "OpenBeats settings window could not start "
+                    f"(exit code {completed.returncode}).\n\n"
+                    f"Log: {local_root() / 'settings-ui.log'}"
                 )
+                write_atomic_text(destination, error_lua(message))
+                _show_windows_error(message)
             elif not destination.is_file():
-                write_atomic_text(
-                    destination,
-                    error_lua("OpenBeats settings window closed without a response."),
+                message = (
+                    "OpenBeats settings window closed without a response.\n\n"
+                    f"Log: {local_root() / 'settings-ui.log'}"
                 )
+                write_atomic_text(destination, error_lua(message))
+                _show_windows_error(message)
         except Exception as exc:
             detail = f"{type(exc).__name__}: {exc}"
-            write_atomic_text(destination, error_lua(detail))
+            message = f"OpenBeats settings window failed: {detail}"
+            write_atomic_text(destination, error_lua(message))
+            _show_windows_error(message)
             traceback.print_exc()
 
         try:
@@ -179,12 +223,9 @@ class BeatAgent:
         if settings_path.is_file():
             return True
         try:
-            completed = subprocess.run(
-                _analysis_settings_command(session_id),
-                check=False,
-                timeout=3600,
-            )
-        except Exception:
+            completed = _run_ui(_analysis_settings_command(session_id))
+        except Exception as exc:
+            _show_windows_error(f"OpenBeats settings window failed: {type(exc).__name__}: {exc}")
             traceback.print_exc()
             return False
         return completed.returncode == 0 and settings_path.is_file()
