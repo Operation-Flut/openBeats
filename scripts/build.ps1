@@ -70,11 +70,13 @@ Write-Host "Building OpenBeats.exe..."
     --windowed `
     --name OpenBeats `
     --paths (Join-Path $projectRoot "app") `
+    --collect-all imageio_ffmpeg `
     --collect-all librosa `
     --collect-all soundfile `
     --collect-all soxr `
     --collect-all numba `
     --hidden-import llvmlite.binding `
+    --copy-metadata imageio-ffmpeg `
     --copy-metadata librosa `
     --distpath $distPath `
     --workpath (Join-Path $projectRoot "build\pyinstaller") `
