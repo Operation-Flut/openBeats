@@ -22,6 +22,9 @@ dev = [
   "pytest>=8.3,<9",
   "ruff>=0.11,<1",
 ]
+build = [
+  "pyinstaller>=6.13,<7",
+]
 
 [project.scripts]
 openbeats-agent = "openbeats.agent:main"
