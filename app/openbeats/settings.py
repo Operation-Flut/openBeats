@@ -8,6 +8,9 @@ from pathlib import Path
 _VALID_MODES = {"tempo", "drum", "onset"}
 _VALID_ACCURACY = {"fast", "balanced", "precise"}
 _VALID_INTERVALS = {1, 2, 4, 8}
+_VALID_SESSION_CHARS = frozenset(
+    "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-"
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -64,7 +67,7 @@ def user_settings_path() -> Path:
 
 
 def session_settings_path(session_id: str) -> Path:
-    if not session_id or any(character not in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-" for character in session_id):
+    if not session_id or any(character not in _VALID_SESSION_CHARS for character in session_id):
         raise ValueError("Invalid OpenBeats session id")
     return _local_root() / "Sessions" / session_id / "settings.json"
 
