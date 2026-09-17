@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import contextlib
 import os
 import signal
 import sys
@@ -104,10 +105,8 @@ class BeatAgent:
         finally:
             # Marker placement no longer needs the rendered source. Keeping result.lua
             # allows Resolve to retry dofile() if its first read races the atomic rename.
-            try:
+            with contextlib.suppress(OSError):
                 audio_path.unlink(missing_ok=True)
-            except OSError:
-                pass
             self._stability.pop(audio_path, None)
 
 
