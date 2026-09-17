@@ -4,6 +4,8 @@ on:
   push:
     tags:
       - "v*.*.*"
+    branches:
+      - "release/v*.*.*"
 
 permissions:
   contents: write
@@ -24,9 +26,15 @@ jobs:
       - name: Validate release version
         shell: pwsh
         run: |
-          $tag = "${{ github.ref_name }}"
+          $refName = "${{ github.ref_name }}"
+          if ($refName.StartsWith("release/")) {
+            $tag = $refName.Substring("release/".Length)
+          } else {
+            $tag = $refName
+          }
+
           if ($tag -notmatch '^v(\d+\.\d+\.\d+)$') {
-            throw "Release tags must use vMAJOR.MINOR.PATCH. Got: $tag"
+            throw "Release refs must resolve to vMAJOR.MINOR.PATCH. Got: $refName"
           }
           $tagVersion = $Matches[1]
 
@@ -38,10 +46,11 @@ jobs:
           $projectVersion = $match.Groups[1].Value
 
           if ($projectVersion -ne $tagVersion) {
-            throw "Tag version $tagVersion does not match pyproject.toml version $projectVersion."
+            throw "Release version $tagVersion does not match pyproject.toml version $projectVersion."
           }
 
           "OPENBEATS_VERSION=$tagVersion" >> $env:GITHUB_ENV
+          "OPENBEATS_TAG=$tag" >> $env:GITHUB_ENV
 
       - name: Install Inno Setup
         shell: pwsh
@@ -79,9 +88,9 @@ jobs:
         run: |
           $installer = "installer/output/OpenBeatsSetup-$env:OPENBEATS_VERSION-x64.exe"
           $checksum = "$installer.sha256"
-          gh release create "${{ github.ref_name }}" `
+          gh release create "$env:OPENBEATS_TAG" `
             $installer `
             $checksum `
-            --verify-tag `
-            --title "OpenBeats ${{ github.ref_name }}" `
+            --target "${{ github.sha }}" `
+            --title "OpenBeats $env:OPENBEATS_TAG" `
             --generate-notes
