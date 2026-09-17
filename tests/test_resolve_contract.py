@@ -23,6 +23,8 @@ def test_lua_launcher_uses_free_compatible_handoff() -> None:
         "pcall(dofile",
         "AddMarker",
         '"openbeats.beat.v1"',
+        "analysis.marker_color",
+        "analysis.marker_name",
         "OpenBeats.LauncherStage",
         "GetCurrentPage",
         "OpenPage",
