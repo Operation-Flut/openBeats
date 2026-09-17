@@ -18,7 +18,6 @@ from kivy.uix.slider import Slider
 from kivy.uix.spinner import Spinner
 from kivy.uix.switch import Switch
 from kivy.uix.togglebutton import ToggleButton
-from kivy.uix.widget import Widget
 
 from openbeats.protocol import selection_lua, session_root, write_atomic_text
 from openbeats.settings import (
@@ -34,7 +33,6 @@ _CARD_BORDER = (0.16, 0.18, 0.23, 1)
 _TEXT = (0.94, 0.95, 0.98, 1)
 _MUTED = (0.60, 0.64, 0.72, 1)
 _ACCENT = (0.18, 0.55, 0.98, 1)
-_ACCENT_DIM = (0.12, 0.24, 0.42, 1)
 _BUTTON = (0.13, 0.15, 0.19, 1)
 
 
@@ -94,15 +92,19 @@ def _text(
     return label
 
 
-def _spacer(height: float = 8) -> Widget:
-    return Widget(size_hint_y=None, height=dp(height))
-
-
 class OpenBeatsSettingsApp(App):
-    def __init__(self, session_id: str, track_indices: tuple[int, ...], **kwargs: object) -> None:
+    def __init__(
+        self,
+        session_id: str,
+        track_indices: tuple[int, ...],
+        *,
+        analysis_only: bool = False,
+        **kwargs: object,
+    ) -> None:
         super().__init__(**kwargs)
         self.session_id = session_id
         self.track_indices = track_indices
+        self.analysis_only = analysis_only
         self.defaults = load_user_settings()
         self._responded = False
         self._track_spinner: Spinner | None = None
@@ -129,14 +131,7 @@ class OpenBeatsSettingsApp(App):
             padding=[dp(22), dp(18), dp(22), dp(18)],
         )
         root.add_widget(_text("OpenBeats", size="28sp", bold=True))
-        root.add_widget(
-            _text(
-                "Beat Detection Settings",
-                size="15sp",
-                color=_MUTED,
-            )
-        )
-
+        root.add_widget(_text("Beat Detection Settings", size="15sp", color=_MUTED))
         root.add_widget(self._track_card())
         root.add_widget(self._mode_card())
         root.add_widget(self._sensitivity_card())
@@ -176,9 +171,15 @@ class OpenBeatsSettingsApp(App):
     def _track_card(self) -> Card:
         card = self._card(88)
         card.add_widget(_text("Audio track", bold=True))
+        if self.analysis_only:
+            card.add_widget(_text("Selected Resolve audio track", color=_MUTED))
+            return card
+
         labels = [f"A{index}" for index in self.track_indices]
         if len(labels) == 1:
-            card.add_widget(_text(f"{labels[0]}  ·  selected automatically", color=_MUTED))
+            card.add_widget(
+                _text(f"{labels[0]}  ·  selected automatically", color=_MUTED)
+            )
         else:
             self._track_spinner = Spinner(
                 text=labels[0],
@@ -197,7 +198,7 @@ class OpenBeatsSettingsApp(App):
         card.add_widget(_text("Detection mode", bold=True))
         card.add_widget(
             _text(
-                "Music Tempo follows the musical grid. Drum Beat favors kicks and drums. "
+                "Music Tempo follows the grid. Drum Beat favors kicks and drums. "
                 "Onset marks individual transients.",
                 size="12sp",
                 color=_MUTED,
@@ -218,7 +219,11 @@ class OpenBeatsSettingsApp(App):
         card = self._card(106)
         header = BoxLayout(size_hint_y=None, height=dp(28))
         header.add_widget(_text("Sensitivity", bold=True))
-        self._sensitivity_value = _text(str(self.defaults.sensitivity), color=_ACCENT, bold=True)
+        self._sensitivity_value = _text(
+            str(self.defaults.sensitivity),
+            color=_ACCENT,
+            bold=True,
+        )
         self._sensitivity_value.halign = "right"
         header.add_widget(self._sensitivity_value)
         card.add_widget(header)
@@ -232,7 +237,11 @@ class OpenBeatsSettingsApp(App):
         self._sensitivity.bind(value=self._update_sensitivity)
         card.add_widget(self._sensitivity)
         card.add_widget(
-            _text("Lower = strong beats only · Higher = more subtle rhythmic events", size="12sp", color=_MUTED)
+            _text(
+                "Lower = strong beats only · Higher = more subtle rhythmic events",
+                size="12sp",
+                color=_MUTED,
+            )
         )
         return card
 
@@ -240,21 +249,29 @@ class OpenBeatsSettingsApp(App):
         card = self._card(102)
         card.add_widget(_text("Marker interval", bold=True))
         row = BoxLayout(size_hint_y=None, height=dp(36), spacing=dp(8))
-        for interval, title in ((1, "Every beat"), (2, "Every 2"), (4, "Every 4"), (8, "Every 8")):
+        choices = ((1, "Every beat"), (2, "Every 2"), (4, "Every 4"), (8, "Every 8"))
+        for interval, title in choices:
             button = ChoiceButton(text=title, group="interval", allow_no_selection=False)
             if interval == self.defaults.interval:
                 button.state = "down"
             self._interval_buttons[interval] = button
             row.add_widget(button)
         card.add_widget(row)
-        card.add_widget(_text("4 beats usually corresponds to one bar in 4/4 music.", size="12sp", color=_MUTED))
+        card.add_widget(
+            _text(
+                "4 beats usually corresponds to one bar in 4/4 music.",
+                size="12sp",
+                color=_MUTED,
+            )
+        )
         return card
 
     def _accuracy_card(self) -> Card:
         card = self._card(142)
         card.add_widget(_text("Accuracy", bold=True))
         row = BoxLayout(size_hint_y=None, height=dp(36), spacing=dp(8))
-        for accuracy, title in (("fast", "Fast"), ("balanced", "Balanced"), ("precise", "Precise")):
+        choices = (("fast", "Fast"), ("balanced", "Balanced"), ("precise", "Precise"))
+        for accuracy, title in choices:
             button = ChoiceButton(text=title, group="accuracy", allow_no_selection=False)
             if accuracy == self.defaults.accuracy:
                 button.state = "down"
@@ -263,12 +280,22 @@ class OpenBeatsSettingsApp(App):
         card.add_widget(row)
 
         snap_row = BoxLayout(size_hint_y=None, height=dp(34), spacing=dp(8))
-        snap_row.add_widget(_text("Snap detected beats to nearby audio transients", size="12sp"))
-        self._snap_switch = Switch(active=self.defaults.snap_to_transients, size_hint_x=None, width=dp(54))
+        snap_row.add_widget(
+            _text("Snap detected beats to nearby audio transients", size="12sp")
+        )
+        self._snap_switch = Switch(
+            active=self.defaults.snap_to_transients,
+            size_hint_x=None,
+            width=dp(54),
+        )
         snap_row.add_widget(self._snap_switch)
         card.add_widget(snap_row)
         card.add_widget(
-            _text("Precise uses the finest timing grid and is slower on long songs.", size="12sp", color=_MUTED)
+            _text(
+                "Precise uses the finest timing grid and is slower on long songs.",
+                size="12sp",
+                color=_MUTED,
+            )
         )
         return card
 
@@ -294,19 +321,31 @@ class OpenBeatsSettingsApp(App):
         return self.track_indices[0]
 
     def _accept(self) -> None:
-        sensitivity = int(round(self._sensitivity.value if self._sensitivity is not None else 55))
+        sensitivity = int(
+            round(self._sensitivity.value if self._sensitivity is not None else 55)
+        )
         settings = BeatSettings(
             mode=str(self._selected(self._mode_buttons, "tempo")),
             sensitivity=sensitivity,
             interval=int(self._selected(self._interval_buttons, 1)),
             accuracy=str(self._selected(self._accuracy_buttons, "precise")),
-            snap_to_transients=bool(self._snap_switch.active if self._snap_switch else True),
+            snap_to_transients=bool(
+                self._snap_switch.active if self._snap_switch else True
+            ),
         )
         save_user_settings(settings)
         save_session_settings(self.session_id, settings)
+        if self.analysis_only:
+            self._responded = True
+            self.stop()
+            return
         self._write_response(selection_lua(self._selected_track()))
 
     def _cancel(self) -> None:
+        if self.analysis_only:
+            self._responded = True
+            self.stop()
+            return
         self._write_response(selection_lua(None))
 
     def _write_response(self, response: str) -> None:
@@ -317,7 +356,7 @@ class OpenBeatsSettingsApp(App):
         self.stop()
 
     def on_stop(self) -> None:
-        if not self._responded:
+        if not self._responded and not self.analysis_only:
             self._responded = True
             write_atomic_text(
                 session_root(self.session_id) / "selection.lua",
@@ -341,14 +380,20 @@ def _parse_tracks(values: Iterable[str]) -> tuple[int, ...]:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="OpenBeats beat detection settings")
     parser.add_argument("--session", required=True)
-    parser.add_argument("--tracks", nargs="+", required=True)
+    parser.add_argument("--tracks", nargs="+", default=["1"])
+    parser.add_argument("--analysis-only", action="store_true")
     return parser
 
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     tracks = _parse_tracks(args.tracks)
-    OpenBeatsSettingsApp(args.session, tracks).run()
+    app = OpenBeatsSettingsApp(
+        args.session,
+        tracks,
+        analysis_only=args.analysis_only,
+    )
+    app.run()
     return 0
 
 
