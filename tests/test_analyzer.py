@@ -61,11 +61,6 @@ def test_analyze_file_refines_tempo_beats(monkeypatch, tmp_path: Path) -> None:
         "_load_audio",
         lambda *_args, **_kwargs: (np.ones(48000, dtype=np.float32), 48000),
     )
-    monkeypatch.setattr(
-        analyzer,
-        "_percussive_signal",
-        lambda audio, *_args, **_kwargs: audio,
-    )
 
     onset_envelope = np.zeros(500, dtype=float)
     onset_envelope[48] = 0.8
@@ -103,7 +98,9 @@ def test_analyze_file_refines_tempo_beats(monkeypatch, tmp_path: Path) -> None:
     assert result.beats == expected
 
 
-def test_onset_mode_and_interval_use_transients(monkeypatch, tmp_path: Path) -> None:
+def test_tempo_mode_does_not_require_percussive_separation(
+    monkeypatch, tmp_path: Path
+) -> None:
     source = tmp_path / "song.wav"
     source.write_bytes(b"fake audio")
     monkeypatch.setattr(
@@ -114,7 +111,75 @@ def test_onset_mode_and_interval_use_transients(monkeypatch, tmp_path: Path) -> 
     monkeypatch.setattr(
         analyzer,
         "_percussive_signal",
-        lambda audio, *_args, **_kwargs: audio,
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("tempo mode must not run HPSS")
+        ),
+    )
+    monkeypatch.setattr(
+        analyzer.librosa.onset,
+        "onset_strength",
+        lambda **_kwargs: np.ones(500, dtype=float),
+    )
+    monkeypatch.setattr(
+        analyzer.librosa.beat,
+        "beat_track",
+        lambda **_kwargs: (np.array([120.0]), np.array([10, 20, 30])),
+    )
+    monkeypatch.setattr(
+        analyzer.librosa.onset,
+        "onset_detect",
+        lambda **_kwargs: np.array([10, 20, 30]),
+    )
+
+    result = analyzer.analyze_file(source, BeatSettings(mode="tempo"))
+
+    assert len(result.beats) == 3
+
+
+def test_tempo_mode_falls_back_when_tuned_grid_is_empty(
+    monkeypatch, tmp_path: Path
+) -> None:
+    source = tmp_path / "song.wav"
+    source.write_bytes(b"fake audio")
+    monkeypatch.setattr(
+        analyzer,
+        "_load_audio",
+        lambda *_args, **_kwargs: (np.ones(48000, dtype=np.float32), 48000),
+    )
+    monkeypatch.setattr(
+        analyzer.librosa.onset,
+        "onset_strength",
+        lambda **_kwargs: np.ones(500, dtype=float),
+    )
+    monkeypatch.setattr(
+        analyzer.librosa.beat,
+        "beat_track",
+        lambda **_kwargs: (np.array([0.0]), np.array([], dtype=int)),
+    )
+    monkeypatch.setattr(
+        analyzer.librosa.onset,
+        "onset_detect",
+        lambda **_kwargs: np.array([], dtype=int),
+    )
+    monkeypatch.setattr(
+        analyzer,
+        "_legacy_tempo_frames",
+        lambda *_args, **_kwargs: (120.0, np.array([10, 20, 30]), 512),
+    )
+
+    result = analyzer.analyze_file(source, BeatSettings(mode="tempo"))
+
+    assert result.bpm == 120.0
+    assert len(result.beats) == 3
+
+
+def test_onset_mode_and_interval_use_transients(monkeypatch, tmp_path: Path) -> None:
+    source = tmp_path / "song.wav"
+    source.write_bytes(b"fake audio")
+    monkeypatch.setattr(
+        analyzer,
+        "_load_audio",
+        lambda *_args, **_kwargs: (np.ones(48000, dtype=np.float32), 48000),
     )
     monkeypatch.setattr(
         analyzer.librosa.onset,
